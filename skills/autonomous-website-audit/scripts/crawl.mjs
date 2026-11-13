@@ -288,6 +288,8 @@ function domAudit({ maxFindings, checkContrast }) {
     } catch { /* bad href */ }
   }
   out.links = [...links].sort().slice(0, 400);
+  const vpMeta = document.querySelector('meta[name="viewport"]');
+  out.viewportMeta = vpMeta ? vpMeta.getAttribute('content') : null;
   out.lang = document.documentElement.lang || null;
   out.dir = document.documentElement.dir || getComputedStyle(document.documentElement).direction;
   return out;
@@ -437,6 +439,8 @@ async function captureOne(browser, opts, pagePath, vp, theme) {
     apiCalls: calls.length,
     slowestApiMs: r.api.slowest[0]?.ms ?? null,
     redirectedToLogin: r.redirectedToLogin || false,
+    // Without width=device-width, phones lay the page out at 980px and shrink it.
+    missingViewportMeta: vp.isMobile && r.navigationError === undefined && !/width\s*=\s*device-width/.test(r.viewportMeta || ''),
     navigationError: Boolean(r.navigationError),
   };
   return r;
@@ -481,7 +485,7 @@ async function capture(args) {
           const file = path.join(dir, `${opts.label}__${vp.name}__${theme}${opts.locale ? `__${opts.locale}` : ''}.json`);
           fs.writeFileSync(file, JSON.stringify(r, null, 2));
           const s = r.summary;
-          const n = s.pageErrors + s.consoleErrors + s.failedRequests + s.httpErrors + s.rawKeys + s.badText + s.lowContrast + s.brokenImages + s.tokensInStorage + (s.overflow ? 1 : 0) + (s.navigationError ? 1 : 0) + (s.redirectedToLogin ? 1 : 0);
+          const n = s.pageErrors + s.consoleErrors + s.failedRequests + s.httpErrors + s.rawKeys + s.badText + s.lowContrast + s.brokenImages + s.tokensInStorage + (s.overflow ? 1 : 0) + (s.navigationError ? 1 : 0) + (s.redirectedToLogin ? 1 : 0) + (s.missingViewportMeta ? 1 : 0);
           actionable += n;
           console.log(
             `[${opts.label} ${vp.name} ${theme}${opts.locale ? ' ' + opts.locale : ''}] ${p} -> ${s.status ?? 'ERR'}` +
@@ -489,6 +493,7 @@ async function capture(args) {
             ` | pageErrors ${s.pageErrors} console ${s.consoleErrors} failed ${s.failedRequests}(+${s.failedNoise} noise)` +
             ` http>=400 ${s.httpErrors} rawKeys ${s.rawKeys} badText ${s.badText} overflow ${s.overflow ? 'YES' : 'no'}` +
             ` lowContrast ${s.lowContrast} brokenImg ${s.brokenImages} tokensInStorage ${s.tokensInStorage}` +
+            `${s.missingViewportMeta ? ' MISSING <meta name=viewport width=device-width>' : ''}` +
             ` api ${s.apiCalls}${s.slowestApiMs != null ? ` (slowest ${s.slowestApiMs}ms)` : ''}` +
             `${r.timing?.ttfbMs != null ? ` ttfb ${r.timing.ttfbMs}ms` : ''}` +
             `${r.navigationError ? ` NAVIGATION ERROR: ${r.navigationError.split('\n')[0]}` : ''}` +

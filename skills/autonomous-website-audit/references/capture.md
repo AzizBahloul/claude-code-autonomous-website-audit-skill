@@ -86,6 +86,7 @@ Every report has a `summary` block. For each non-zero count:
 | `overflow` | The page scrolls sideways, or elements stick out past the viewport | `overflow.offenders` names the outermost elements |
 | `lowContrast` | Text below WCAG AA against a solid background | Check both themes; elements on gradients or images are skipped |
 | `tokensInStorage` | JWT-like values, or keys named like tokens, in local or session storage | Security layer |
+| `missingViewportMeta` | Phone run found no `<meta name="viewport" content="width=device-width">`, so phones render the page at 980 px and shrink it | Add the tag in the root layout or document head |
 | `redirectedToLogin` | The session expired, or the role lacks access | Log in again, or confirm the gating is intended |
 
 Write what you find in `.website-audit/pages/<slug>.md`. The later layers fix it.
