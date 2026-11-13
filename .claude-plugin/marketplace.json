@@ -9,9 +9,9 @@
     {
       "name": "autonomous-website-audit",
       "source": "./",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "category": "development",
-      "description": "Audits and repairs a whole website page by page: route inventory, every role, phone/tablet/desktop in light and dark, then functionality and latency, design, security and i18n fixes in a fixed order until every page is done."
+      "description": "Audits and repairs a whole website page by page: route inventory and safe link discovery, every role, phone/tablet/desktop in light and dark, then functionality and latency, design, accessibility, security and i18n fixes in a fixed order, with evidence gates and a findings ledger, until every page is done."
     }
   ]
 }

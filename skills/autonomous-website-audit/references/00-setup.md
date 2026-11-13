@@ -1,5 +1,9 @@
 # Phase 0: Setup
 
+> **Answers:** can the audit run safely here?
+> **Exit gate:** local servers answer over HTTP, nothing points at production, `setup.sh`
+> passes (Playwright, Chromium, axe-core, Pillow), and one skill is chosen per layer.
+
 ## Contents
 - Read the project's rules
 - Create the state directory
@@ -7,6 +11,7 @@
 - Make sure you are not pointed at production
 - Tooling
 - Choose the design and security skills
+- Mistakes to avoid
 
 ## Read the project's rules
 
@@ -60,9 +65,11 @@ acceptable only after the user explicitly says yes.
 bash ${CLAUDE_SKILL_DIR}/scripts/setup.sh
 ```
 
-This reuses the project's Playwright if it has one, and otherwise installs Playwright next to
-the scripts. It then checks that Chromium launches and that Pillow is importable, so a passing
-run means `crawl.mjs` and `tile.py` will work.
+This reuses the project's Playwright and axe-core if it has them, and otherwise installs them
+next to the scripts (never into the project). It then checks that Chromium launches and that
+Pillow is importable, so a passing run means `crawl.mjs`, `tile.py` and `summarize.py` will
+work. Run `python3 ${CLAUDE_SKILL_DIR}/scripts/<script> --help` for any script's options
+instead of reading its source.
 
 ## Choose the design and security skills
 
@@ -81,9 +88,9 @@ Use the skills in the session's own skill list as well. Then pick one skill per 
 - **Security.** In order of preference:
   1. an installed OWASP-style review skill;
   2. Claude Code's built-in `/security-review` for the diff;
-  3. the checklist in `06-security.md`, which is self-contained.
-- **Accessibility and i18n.** Use an installed skill when there is one. The reference files
-  cover both layers on their own.
+  3. the checklist in `07-security.md`, which is self-contained.
+- **Accessibility and i18n.** Use an installed skill when there is one (an a11y or WCAG audit
+  skill for the `a11y` layer). The reference files cover both layers on their own.
 
 If no design skill is installed, install Anthropic's official one, then tell the user what
 was installed and from where:
@@ -104,3 +111,11 @@ use the built-in options above and put the recommendation in the report.
 
 Load the chosen design skill once, during the first page's `code` layer, and follow it in every
 `design` layer after that.
+
+## Mistakes to avoid
+
+- Restarting or killing a dev server you did not start.
+- Trusting an env file name: `.env.development` can still point at a production API.
+- Measuring latency on a dev server and calling it slow. Compare before and after on the same build.
+- Skipping `setup.sh` because Playwright "is obviously installed". Without axe-core the
+  a11y gate cannot pass.

@@ -1,0 +1,24 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Defects</title>
+<style>
+body{font-family:sans-serif;margin:0;padding:8px;background:#fff}
+.wide{width:1800px;height:20px;background:#eee}
+.faint{color:#bbb}
+.tiny{display:inline-block;width:14px;height:14px;padding:0;font-size:10px}
+button.noring:focus{outline:none}
+.clicky{cursor:pointer;padding:12px;background:#def}
+</style></head>
+<body>
+<div class="wide">too wide</div>
+<p class="faint">Low contrast text that nobody can read</p>
+<p>Total: NaN points</p>
+<p>dashboard.stats.emptyTitle</p>
+<p>Hello {name}</p>
+<button class="tiny" aria-label="close">x</button>
+<button class="noring">No focus ring</button>
+<div class="clicky" onclick="void 0">Clickable div</div>
+<img src="/missing.png">
+<span id="dup">a</span><span id="dup">b</span>
+<input type="text">
+<script>localStorage.setItem('accessToken','eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc'); console.error('boom from fixture');</script>
+</body></html>

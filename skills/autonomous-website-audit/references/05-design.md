@@ -1,7 +1,13 @@
 # Layer: design
 
+> **Answers:** is this page consistent with the site and unbroken at every width, in both themes?
+> **Gate:** every finding in this layer is resolved, and the note names what changed.
+
 Fix this page's design issues, following the design skill chosen in setup. The goal is
-consistency with the rest of the site, not a redesign.
+consistency with the rest of the site, not a redesign (rule I5).
+
+**Steps:** find the existing tokens and components, work through the checklist for every
+width and both themes, fix with what exists, then re-capture and view the changed areas.
 
 ## Reuse before you create
 
@@ -36,11 +42,27 @@ as a token.
   look intentional.
 - **Copy fit.** Long names, long translations and large numbers do not break the layout. Check
   the longest locale in the i18n layer.
-- **Accessibility basics.** Every control has a label, images have alt text, focus order is
-  logical, and nothing relies on colour alone.
+- **Viewport tag.** `missingViewportMeta` on phone means the layout is rendered at 980 px and
+  shrunk. Add `width=device-width, initial-scale=1` in the root layout.
+- **Inner scroll areas.** `scrollContainers` in the report means the full-page capture cut
+  off content inside a scrolling panel. Re-capture with `--expand-scrollers` before judging it.
+
+Labels, focus, keyboard and screen-reader issues belong to the next layer, `a11y`. Fix
+contrast here, because it is part of the colour system.
 - **Data claims on screen.** See `capture.md`.
 
 ## Verify
 
 Re-capture the affected widths and themes, tile the captures and view the changed areas. Do
 the same for any shared component you touched, on at least one other page that uses it.
+
+Run `python3 ${CLAUDE_SKILL_DIR}/scripts/summarize.py repeats .website-audit/shots/baseline`
+after the first few pages. A finding repeated across pages belongs to a shared component:
+fix it there once.
+
+## Mistakes to avoid
+
+- Hard-coding a colour, spacing or radius that exists as a token.
+- Restyling a page so it looks better than its siblings. Consistency beats local taste.
+- Fixing light mode and breaking dark mode, or desktop and breaking phone. Re-capture both.
+- Editing a shared component without checking at least one other page that uses it.

@@ -1,5 +1,9 @@
 # Phase 1: Accounts
 
+> **Answers:** who can use this site, and what does each of them see?
+> **Exit gate:** `.website-audit/roles.md` lists every role and state, and each one with its
+> own interface has a storage state that a capture has verified.
+
 ## Contents
 - Find every role and state
 - Ask the user once
@@ -83,3 +87,12 @@ node ${CLAUDE_SKILL_DIR}/scripts/crawl.mjs capture --base http://localhost:3000 
 The output must not report `redirected to /login`, and `redirectedToLogin` in the JSON must be
 false. Sessions expire mid-run. When a later capture redirects to login, log in again before
 trusting the results.
+
+## Mistakes to avoid
+
+- Auditing only as an admin. Admins see everything, so missing guards stay invisible.
+- Asking the user for their own login. Ask for test accounts, or create them locally.
+- Logging in again inside every capture. Save one storage state per role and reuse it until a
+  capture reports `redirectedToLogin`.
+- Following a "log out" or "switch account" link in a hand-written flow with a saved session.
+  It invalidates the session for every later capture.

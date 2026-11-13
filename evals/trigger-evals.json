@@ -1,0 +1,18 @@
+{
+  "skill": "autonomous-website-audit",
+  "about": "Should the skill load for this request? Run each query in a fresh session with the skill installed and record whether it was invoked. Target: every should_trigger=true loads it, and no should_trigger=false does.",
+  "queries": [
+    {"query": "audit my whole Next.js app, every page, and fix what's broken", "should_trigger": true},
+    {"query": "check every screen size and dark mode on all routes of this site", "should_trigger": true},
+    {"query": "QA the entire web app as admin, coach and player and fix design and security issues", "should_trigger": true},
+    {"query": "do a full polish pass across all pages: functionality, design, accessibility, i18n", "should_trigger": true},
+    {"query": "crawl the site and make sure no page is broken on mobile", "should_trigger": true},
+    {"query": "run an accessibility, security and translation pass over every route", "should_trigger": true},
+    {"query": "open example.com in a browser and take a screenshot", "should_trigger": false},
+    {"query": "fix the padding on this one button component", "should_trigger": false},
+    {"query": "write a Playwright test for the login form", "should_trigger": false},
+    {"query": "review this PR for security issues", "should_trigger": false},
+    {"query": "scrape product prices from this shop", "should_trigger": false},
+    {"query": "make this landing page look more premium", "should_trigger": false}
+  ]
+}

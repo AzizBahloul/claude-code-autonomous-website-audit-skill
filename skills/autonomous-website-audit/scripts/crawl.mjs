@@ -7,14 +7,18 @@
 //        [--storage .website-audit/auth/coach.json] [--label coach] \
 //        [--viewports phone,tablet,desktop] [--themes light,dark] \
 //        [--theme-storage-key theme] [--locale fr] [--out .website-audit/shots] \
-//        [--no-screenshot] [--no-scroll] [--settle 800] [--timeout 30000] \
-//        [--wait-for "main"] [--strict]
+//        [--no-screenshot] [--no-scroll] [--no-axe] [--keyboard] [--settle 800] \
+//        [--timeout 30000] [--wait-for "main"] [--strict]
+//   node crawl.mjs discover --base http://localhost:3000 [--path /] \
+//        [--storage .website-audit/auth/coach.json] [--max-pages 150] [--deny REGEX] \
+//        [--compare .website-audit/progress.json] [--out .website-audit/discover]
 //   node crawl.mjs login --base http://localhost:3000 --login-path /login \
 //        --email coach@example.test --password-env WEBSITE_AUDIT_PASSWORD \
 //        --out .website-audit/auth/coach.json
 //   node crawl.mjs selftest
 //
 // Viewports: phone=390x844, tablet=768x1024, desktop=1440x900, or WIDTHxHEIGHT.
+// discover only follows <a href> links with GET navigations; it never clicks or submits.
 
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -59,6 +63,20 @@ function loadPlaywright() {
   die(`Playwright not found. Run: bash ${path.join(HERE, 'setup.sh')}`);
 }
 
+// axe-core source, from the project or from next to this script. null when absent:
+// the capture still runs, and the report says the accessibility scan was skipped.
+function loadAxeSource() {
+  for (const base of [process.cwd(), HERE]) {
+    try {
+      const file = createRequire(path.join(base, 'noop.js')).resolve('axe-core/axe.min.js');
+      return fs.readFileSync(file, 'utf8');
+    } catch { /* try next */ }
+  }
+  return null;
+}
+
+const AXE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
+
 function resolveViewport(name) {
   if (VIEWPORTS[name]) return { name, ...VIEWPORTS[name] };
   const m = /^(\d+)x(\d+)$/.exec(name);
@@ -91,6 +109,16 @@ function classifyFailure({ url, resourceType, errorText = '', status }, baseOrig
   return null;
 }
 
+// Names the console errors that have a known cause, so they are triaged correctly.
+function consoleKind(text) {
+  if (/hydrat|did not match|server rendered HTML|Text content does not match/i.test(text)) return 'hydration-mismatch';
+  if (/ChunkLoadError|Loading chunk \S+ failed|Failed to fetch dynamically imported module/i.test(text)) return 'chunk-load (stale deploy or dev-server restart; re-run)';
+  if (/Content Security Policy|Refused to (load|execute|apply|connect)/i.test(text)) return 'csp-violation';
+  if (/unique "key" prop|Each child in a list/i.test(text)) return 'react-key-warning';
+  if (/CORS|Access-Control-Allow-Origin/i.test(text)) return 'cors';
+  return null;
+}
+
 // Strip query values so tokens in query strings never land in reports.
 function redactUrl(u) {
   try {
@@ -103,8 +131,8 @@ function redactUrl(u) {
 // ------------------------------------------------------ in-page DOM audit
 // Runs inside the browser. Must be self-contained.
 
-function domAudit({ maxFindings, checkContrast }) {
-  const out = { overflow: {}, badText: [], rawKeys: [], brokenImages: [], lowContrast: [], storage: {}, links: [] };
+function domAudit({ maxFindings, checkContrast, checkTouch }) {
+  const out = { overflow: {}, badText: [], rawKeys: [], brokenImages: [], lowContrast: [], smallTargets: [], structure: {}, storage: {}, links: [] };
   const vw = document.documentElement.clientWidth;
 
   const sel = (el) => {
@@ -262,6 +290,52 @@ function domAudit({ maxFindings, checkContrast }) {
     }
   }
 
+  // Touch targets (touch viewports only). WCAG 2.2 SC 2.5.8 sets 24x24 CSS px as the floor.
+  // Inline links inside running text are exempt, as are controls wrapped by a large enough label.
+  if (checkTouch && document.body) {
+    const CONTROLS = 'a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=tab],[role=checkbox],[role=radio],[role=switch],[role=menuitem]';
+    for (const el of document.body.querySelectorAll(CONTROLS)) {
+      if (out.smallTargets.length >= maxFindings) break;
+      if (!visible(el) || el.closest('[aria-hidden="true"],[inert]')) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width >= 24 && r.height >= 24) continue;
+      const cs = getComputedStyle(el);
+      if (el.tagName === 'A' && cs.display === 'inline') {
+        const block = el.parentElement;
+        if (block && block.textContent.trim().length > el.textContent.trim().length + 10) continue;
+      }
+      const label = el.closest('label');
+      if (label) { const lr = label.getBoundingClientRect(); if (lr.width >= 24 && lr.height >= 24) continue; }
+      push(out.smallTargets, {
+        selector: sel(el), width: Math.round(r.width), height: Math.round(r.height),
+        text: (el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 40),
+      });
+    }
+  }
+
+  // Document structure: one h1, a title, a language, unique ids. Missing descriptions only
+  // matter on public pages, so they are reported but not counted.
+  const h1s = [...document.querySelectorAll('h1')].filter(visible);
+  const idCounts = {};
+  for (const el of document.querySelectorAll('[id]')) idCounts[el.id] = (idCounts[el.id] || 0) + 1;
+  const dupIds = Object.entries(idCounts).filter(([, n]) => n > 1).map(([id, n]) => `${id} x${n}`);
+  out.structure = {
+    h1Count: h1s.length,
+    h1: h1s.slice(0, 3).map((h) => h.textContent.trim().slice(0, 80)),
+    titleMissing: !document.title.trim(),
+    langMissing: !document.documentElement.getAttribute('lang'),
+    duplicateIds: dupIds.slice(0, maxFindings),
+    metaDescription: document.querySelector('meta[name="description"]')?.getAttribute('content') || null,
+    canonical: document.querySelector('link[rel="canonical"]')?.getAttribute('href') || null,
+  };
+  out.structure.issues = [
+    h1s.length === 0 && 'no visible <h1>',
+    h1s.length > 1 && `${h1s.length} visible <h1> elements`,
+    out.structure.titleMissing && 'empty <title>',
+    out.structure.langMissing && '<html> has no lang',
+    dupIds.length && `${dupIds.length} duplicated id(s)`,
+  ].filter(Boolean);
+
   // Storage: key names and flags only; values never leave the page.
   const SENSITIVE = /token|jwt|auth|session|access|refresh|secret|password|bearer|credential/i;
   const JWT = /eyJ[\w-]+\.[\w-]+\.[\w-]*/;
@@ -320,13 +394,100 @@ async function vitals(page) {
       transferKB: Math.round((nav.transferSize || 0) / 1024),
     } : {};
     let lcp = 0;
+    let cls = 0;
     try {
       new PerformanceObserver((list) => {
         for (const e of list.getEntries()) lcp = Math.max(lcp, e.startTime);
       }).observe({ type: 'largest-contentful-paint', buffered: true });
+      new PerformanceObserver((list) => {
+        for (const e of list.getEntries()) if (!e.hadRecentInput) cls += e.value;
+      }).observe({ type: 'layout-shift', buffered: true });
     } catch { /* unsupported */ }
-    setTimeout(() => resolve({ ...result, lcpMs: Math.round(lcp) || null }), 150);
+    setTimeout(() => resolve({ ...result, lcpMs: Math.round(lcp) || null, cls: Math.round(cls * 1000) / 1000 }), 150);
   }));
+}
+
+// WCAG A/AA rules only, so the findings are ones a fix can close. Evaluated through the
+// DevTools protocol, so the page's CSP does not block it.
+async function axeScan(page, source, maxFindings) {
+  await page.evaluate(source);
+  const res = await page.evaluate(async (tags) => {
+    // eslint-disable-next-line no-undef
+    const r = await axe.run(document, { runOnly: { type: 'tag', values: tags }, resultTypes: ['violations'] });
+    return r.violations.map((v) => ({
+      id: v.id, impact: v.impact, help: v.help, helpUrl: v.helpUrl, nodes: v.nodes.length,
+      targets: v.nodes.slice(0, 5).map((n) => n.target.join(' ')),
+      sample: (v.nodes[0]?.html || '').slice(0, 160),
+    }));
+  }, AXE_TAGS);
+  const rank = { critical: 0, serious: 1, moderate: 2, minor: 3 };
+  return res.sort((a, b) => (rank[a.impact] ?? 4) - (rank[b.impact] ?? 4)).slice(0, maxFindings);
+}
+
+// Tabs through the page and records what keyboard users get: whether focus is visible,
+// whether it gets stuck, and which pointer-only controls it can never reach.
+async function keyboardProbe(page, maxStops) {
+  const FOCUSABLE = 'a[href],button,input:not([type=hidden]),select,textarea,summary,[tabindex],[contenteditable=""],[contenteditable=true]';
+  await page.evaluate((focusable) => {
+    const look = (el) => { const c = getComputedStyle(el); return [c.outlineStyle, c.outlineWidth, c.outlineColor, c.boxShadow, c.borderColor, c.backgroundColor, c.color, c.textDecorationLine].join('|'); };
+    window.__auditFocus = [];
+    document.querySelectorAll(focusable).forEach((el, i) => { el.dataset.auditFi = String(i); window.__auditFocus[i] = look(el); });
+    document.activeElement?.blur?.();
+  }, FOCUSABLE);
+  const stops = [];
+  let trap = null;
+  for (let i = 0; i < maxStops; i++) {
+    await page.keyboard.press('Tab');
+    const s = await page.evaluate(async () => {
+      const el = document.activeElement;
+      if (!el || el === document.body || el === document.documentElement) return { body: true };
+      // Let a focus transition finish before reading the focused style.
+      const longest = Math.max(0, ...getComputedStyle(el).transitionDuration.split(',').map((d) => parseFloat(d) * (d.includes('ms') ? 1 : 1000) || 0));
+      if (longest) await new Promise((r) => setTimeout(r, Math.min(longest + 20, 400)));
+      const c = getComputedStyle(el);
+      const now = [c.outlineStyle, c.outlineWidth, c.outlineColor, c.boxShadow, c.borderColor, c.backgroundColor, c.color, c.textDecorationLine].join('|');
+      const before = el.dataset.auditFi !== undefined ? window.__auditFocus[Number(el.dataset.auditFi)] : null;
+      const outlined = c.outlineStyle !== 'none' && parseFloat(c.outlineWidth) > 0;
+      const r = el.getBoundingClientRect();
+      const p = [];
+      for (let n = el, k = 0; n && n.nodeType === 1 && k < 3; n = n.parentElement, k++) {
+        p.unshift(n.tagName.toLowerCase() + (n.id ? `#${n.id}` : ''));
+        if (n.id) break;
+      }
+      return {
+        key: el.dataset.auditFi ?? p.join('>'), selector: p.join(' > '),
+        text: (el.innerText || el.getAttribute('aria-label') || el.getAttribute('placeholder') || '').trim().slice(0, 40),
+        indicator: outlined || (before !== null && before !== now),
+        offscreen: r.width === 0 || r.height === 0 || r.bottom + window.scrollY < 0 || r.right < 0,
+      };
+    });
+    if (s.body) { if (stops.length) break; continue; }
+    if (stops.length && s.key === stops[0].key) break; // wrapped around: full cycle
+    stops.push(s);
+    if (stops.filter((x) => x.key === s.key).length > 2) { trap = s.selector; break; }
+  }
+  const pointerOnly = await page.evaluate((focusable) => {
+    const out = [];
+    for (const el of document.body.querySelectorAll('*')) {
+      if (out.length >= 15) break;
+      if (getComputedStyle(el).cursor !== 'pointer') continue;
+      if (el.closest(focusable) || el.closest('label')) continue;
+      if (el.parentElement && getComputedStyle(el.parentElement).cursor === 'pointer') continue;
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) continue;
+      out.push({ tag: el.tagName.toLowerCase(), text: (el.innerText || '').trim().slice(0, 40), cls: String(el.className).slice(0, 60) });
+    }
+    return out;
+  }, FOCUSABLE);
+  return {
+    stops: stops.length,
+    trap,
+    firstStop: stops[0] ? `${stops[0].selector} "${stops[0].text}"` : null,
+    skipLink: Boolean(stops[0] && /skip/i.test(stops[0].text)),
+    noIndicator: stops.filter((s) => !s.indicator).slice(0, 20).map((s) => `${s.selector} "${s.text}"`),
+    offscreenFocus: stops.filter((s) => s.offscreen).slice(0, 10).map((s) => s.selector),
+    pointerOnly,
+  };
 }
 
 async function captureOne(browser, opts, pagePath, vp, theme) {
@@ -338,6 +499,7 @@ async function captureOne(browser, opts, pagePath, vp, theme) {
     isMobile: vp.isMobile,
     hasTouch: vp.hasTouch,
     colorScheme: theme,
+    reducedMotion: 'reduce', // steadier captures; animations are reviewed by hand, not here
     locale: opts.locale || undefined,
     extraHTTPHeaders: opts.locale ? { 'Accept-Language': opts.locale } : undefined,
     storageState: opts.storage || undefined,
@@ -347,13 +509,15 @@ async function captureOne(browser, opts, pagePath, vp, theme) {
   }
   const page = await context.newPage();
   const r = {
-    url, path: pagePath, label: opts.label, viewport: vp.name, size: `${vp.width}x${vp.height}`, theme,
+    url, path: pagePath, label: opts.label, signedIn: Boolean(opts.storage), viewport: vp.name, size: `${vp.width}x${vp.height}`, theme,
     locale: opts.locale || null, at: new Date().toISOString(),
     pageErrors: [], consoleErrors: [], failedRequests: [], httpErrors: [], api: { calls: [], origins: [] },
   };
   page.on('pageerror', (e) => r.pageErrors.push({ message: String(e.message).slice(0, 500), stack: String(e.stack || '').split('\n').slice(0, 4).join('\n') }));
   page.on('console', (m) => {
-    if (m.type() === 'error') r.consoleErrors.push({ text: m.text().slice(0, 500), source: m.location()?.url ? redactUrl(m.location().url) : null });
+    if (m.type() !== 'error') return;
+    const text = m.text();
+    r.consoleErrors.push({ text: text.slice(0, 500), kind: consoleKind(text), source: m.location()?.url ? redactUrl(m.location().url) : null });
   });
   page.on('requestfailed', (req) => {
     const item = { url: redactUrl(req.url()), method: req.method(), resourceType: req.resourceType(), error: req.failure()?.errorText || '' };
@@ -381,7 +545,8 @@ async function captureOne(browser, opts, pagePath, vp, theme) {
   try {
     const resp = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: opts.timeout });
     r.status = resp ? resp.status() : null;
-    try { await page.waitForLoadState('networkidle', { timeout: Math.min(opts.timeout, 15000) }); r.networkIdle = true; } catch { r.networkIdle = false; }
+    // Apps with websockets or polling never go idle; wait briefly, then rely on --wait-for.
+    try { await page.waitForLoadState('networkidle', { timeout: opts.idleTimeout }); r.networkIdle = true; } catch { r.networkIdle = false; }
     if (opts.waitFor) {
       try { await page.waitForSelector(opts.waitFor, { timeout: opts.timeout }); } catch { r.waitForMissing = opts.waitFor; }
     }
@@ -393,11 +558,46 @@ async function captureOne(browser, opts, pagePath, vp, theme) {
     r.redirected = finalPath !== reqPath;
     r.redirectedToLogin = r.redirected && /log-?in|sign-?in|auth/i.test(finalPath) && !/log-?in|sign-?in|auth/i.test(reqPath);
     r.timing = await vitals(page);
-    Object.assign(r, await page.evaluate(domAudit, { maxFindings: opts.maxFindings, checkContrast: opts.contrast }));
+    Object.assign(r, await page.evaluate(domAudit, { maxFindings: opts.maxFindings, checkContrast: opts.contrast, checkTouch: vp.hasTouch }));
+    if (opts.axeSource) {
+      try { r.a11y = await axeScan(page, opts.axeSource, opts.maxFindings); } catch (e) { r.a11yError = String(e.message).slice(0, 200); }
+    } else if (opts.axe) {
+      r.a11yError = 'axe-core not installed; run setup.sh (the accessibility scan was skipped)';
+    }
     r.cookies = (await context.cookies(opts.base)).map((c) => ({
       name: c.name, httpOnly: c.httpOnly, secure: c.secure, sameSite: c.sameSite,
       flags: /token|jwt|auth|session|sid|access|refresh/i.test(c.name) && !c.httpOnly ? ['auth-cookie-readable-by-js'] : [],
     }));
+    r.scrollContainers = await page.evaluate(() => {
+      const out = [];
+      for (const el of document.querySelectorAll('body *')) {
+        if (out.length >= 10) break;
+        const cs = getComputedStyle(el);
+        if (!/(auto|scroll)/.test(cs.overflowY) || el.scrollHeight <= el.clientHeight + 40 || el.clientHeight < 150) continue;
+        if (el === document.scrollingElement || el === document.body) continue;
+        const id = el.id ? `#${el.id}` : (typeof el.className === 'string' && el.className.trim() ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : '');
+        out.push({ selector: el.tagName.toLowerCase() + id, visibleHeight: el.clientHeight, contentHeight: el.scrollHeight });
+      }
+      return out;
+    });
+    if (opts.expandScrollers && r.scrollContainers.length) {
+      // Let inner scroll areas grow so the full-page capture includes their content.
+      await page.evaluate(() => {
+        for (const el of document.querySelectorAll('body *')) {
+          const cs = getComputedStyle(el);
+          if (/(auto|scroll)/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 40 && el.clientHeight >= 150) {
+            el.style.setProperty('height', 'auto', 'important');
+            el.style.setProperty('max-height', 'none', 'important');
+            el.style.setProperty('overflow', 'visible', 'important');
+          }
+        }
+        for (let n of [document.documentElement, document.body]) {
+          n.style.setProperty('height', 'auto', 'important');
+          n.style.setProperty('overflow', 'visible', 'important');
+        }
+      });
+      r.scrollersExpanded = true;
+    }
     if (opts.screenshot) {
       const dir = path.join(opts.out, slug(pagePath));
       fs.mkdirSync(dir, { recursive: true });
@@ -410,6 +610,18 @@ async function captureOne(browser, opts, pagePath, vp, theme) {
         r.screenshot = file;
         r.screenshotNote = `full-page capture failed (${String(e.message).slice(0, 120)}); viewport-only capture saved`;
       }
+    }
+    // Keyboard probe last: it moves focus and scrolls, which would change the screenshot.
+    if (opts.keyboard && !vp.isMobile) {
+      try { r.keyboard = await keyboardProbe(page, opts.maxTabStops); } catch (e) { r.keyboardError = String(e.message).slice(0, 200); }
+      try {
+        await page.evaluate(() => document.querySelectorAll('input[type=password]').forEach((i) => { i.value = ''; }));
+        const tree = await page.locator('body').ariaSnapshot({ timeout: 10000 });
+        const dir = path.join(opts.out, slug(pagePath));
+        fs.mkdirSync(dir, { recursive: true });
+        r.ariaSnapshot = path.join(dir, `${opts.label}__${vp.name}__${theme}${opts.locale ? `__${opts.locale}` : ''}.aria.yml`);
+        fs.writeFileSync(r.ariaSnapshot, tree);
+      } catch (e) { r.ariaSnapshotError = String(e.message).slice(0, 200); }
     }
   } catch (e) {
     r.navigationError = String(e.message).slice(0, 500);
@@ -435,6 +647,17 @@ async function captureOne(browser, opts, pagePath, vp, theme) {
     overflow: Boolean(r.overflow?.pageScrollsHorizontally || r.overflow?.offenders?.length),
     lowContrast: r.lowContrast?.filter((x) => !x.disabled).length ?? 0,
     brokenImages: r.brokenImages?.length ?? 0,
+    a11ySerious: r.a11y?.filter((v) => v.impact === 'critical' || v.impact === 'serious').length ?? 0,
+    a11yOther: r.a11y?.filter((v) => v.impact !== 'critical' && v.impact !== 'serious').length ?? 0,
+    a11yScanned: Boolean(r.a11y),
+    smallTargets: r.smallTargets?.length ?? 0,
+    scrollContainers: r.scrollersExpanded ? 0 : (r.scrollContainers?.length ?? 0),
+    hydration: r.consoleErrors.filter((e) => e.kind === 'hydration-mismatch').length,
+    structure: r.structure?.issues?.length ?? 0,
+    cls: r.timing?.cls ?? null,
+    keyboardNoIndicator: r.keyboard?.noIndicator.length ?? 0,
+    keyboardTrap: Boolean(r.keyboard?.trap),
+    pointerOnly: r.keyboard?.pointerOnly.length ?? 0,
     tokensInStorage: [...(r.storage?.localStorage || []), ...(r.storage?.sessionStorage || [])].filter((x) => x.flags.length).length,
     apiCalls: calls.length,
     slowestApiMs: r.api.slowest[0]?.ms ?? null,
@@ -465,7 +688,13 @@ async function capture(args) {
     timeout: Number(args.timeout ?? 30000),
     waitFor: typeof args['wait-for'] === 'string' ? args['wait-for'] : null,
     maxFindings: Number(args['max-findings'] ?? 25),
+    axe: args.axe !== false,
+    idleTimeout: Number(args['idle-timeout'] ?? 5000),
+    expandScrollers: args['expand-scrollers'] === true,
+    keyboard: args.keyboard === true,
+    maxTabStops: Number(args['max-tab-stops'] ?? 80),
   };
+  opts.axeSource = opts.axe ? loadAxeSource() : null;
   const viewports = String(args.viewports || 'phone,tablet,desktop').split(',').map((s) => resolveViewport(s.trim()));
   const themes = String(args.themes || 'light').split(',').map((s) => s.trim());
   for (const t of themes) if (!['light', 'dark'].includes(t)) die(`theme must be light or dark, got "${t}"`);
@@ -485,7 +714,9 @@ async function capture(args) {
           const file = path.join(dir, `${opts.label}__${vp.name}__${theme}${opts.locale ? `__${opts.locale}` : ''}.json`);
           fs.writeFileSync(file, JSON.stringify(r, null, 2));
           const s = r.summary;
-          const n = s.pageErrors + s.consoleErrors + s.failedRequests + s.httpErrors + s.rawKeys + s.badText + s.lowContrast + s.brokenImages + s.tokensInStorage + (s.overflow ? 1 : 0) + (s.navigationError ? 1 : 0) + (s.redirectedToLogin ? 1 : 0) + (s.missingViewportMeta ? 1 : 0);
+          const n = s.pageErrors + s.consoleErrors + s.failedRequests + s.httpErrors + s.rawKeys + s.badText + s.lowContrast + s.brokenImages + s.tokensInStorage
+            + s.a11ySerious + s.smallTargets + s.structure + s.keyboardNoIndicator + s.pointerOnly
+            + (s.overflow ? 1 : 0) + (s.navigationError ? 1 : 0) + (s.redirectedToLogin ? 1 : 0) + (s.missingViewportMeta ? 1 : 0) + (s.keyboardTrap ? 1 : 0) + ((s.cls ?? 0) > 0.1 ? 1 : 0);
           actionable += n;
           console.log(
             `[${opts.label} ${vp.name} ${theme}${opts.locale ? ' ' + opts.locale : ''}] ${p} -> ${s.status ?? 'ERR'}` +
@@ -493,6 +724,12 @@ async function capture(args) {
             ` | pageErrors ${s.pageErrors} console ${s.consoleErrors} failed ${s.failedRequests}(+${s.failedNoise} noise)` +
             ` http>=400 ${s.httpErrors} rawKeys ${s.rawKeys} badText ${s.badText} overflow ${s.overflow ? 'YES' : 'no'}` +
             ` lowContrast ${s.lowContrast} brokenImg ${s.brokenImages} tokensInStorage ${s.tokensInStorage}` +
+            ` a11y ${s.a11yScanned ? `${s.a11ySerious} serious/critical +${s.a11yOther}` : 'SKIPPED'} structure ${s.structure}` +
+            `${vp.hasTouch ? ` smallTargets ${s.smallTargets}` : ''}` +
+            `${s.scrollContainers ? ` INNER-SCROLL x${s.scrollContainers} (capture misses content; re-run with --expand-scrollers)` : ''}` +
+            `${s.hydration ? ` HYDRATION x${s.hydration}` : ''}` +
+            `${s.cls != null ? ` cls ${s.cls}${s.cls > 0.1 ? ' (POOR)' : ''}` : ''}` +
+            `${r.keyboard ? ` | keyboard stops ${r.keyboard.stops} noFocusRing ${s.keyboardNoIndicator} pointerOnly ${s.pointerOnly}${s.keyboardTrap ? ` TRAP at ${r.keyboard.trap}` : ''}` : ''}` +
             `${s.missingViewportMeta ? ' MISSING <meta name=viewport width=device-width>' : ''}` +
             ` api ${s.apiCalls}${s.slowestApiMs != null ? ` (slowest ${s.slowestApiMs}ms)` : ''}` +
             `${r.timing?.ttfbMs != null ? ` ttfb ${r.timing.ttfbMs}ms` : ''}` +
@@ -506,6 +743,170 @@ async function capture(args) {
     await browser.close();
   }
   if (args.strict && actionable > 0) process.exit(1);
+}
+
+// -------------------------------------------------------------- discover
+// Breadth-first link crawl that finds pages the inventory missed (SPA routes, query-string
+// tabs, links built at runtime). Safety: GET navigations only, no clicks, no form submits,
+// and links that look like they change state (logout, delete...) are never followed.
+
+const DEFAULT_DENY = '(log-?out|sign-?out|log-?off|delete|destroy|remove|unsubscribe|deactivate|revoke|disconnect|cancel|reset|impersonat|switch-?(account|user)|/api/)';
+const KEEP_QUERY = /^(tab|step|view|section|mode|panel|type|filter)$/i;
+const SKIP_EXT = /\.(pdf|zip|gz|csv|xlsx?|docx?|pptx?|png|jpe?g|gif|svg|webp|ico|mp4|webm|mp3|wav|json|xml|txt|ics)$/i;
+
+// Collapse ids so /players/42 and /players/43 count as one page, which stops endless crawls.
+function routePattern(u) {
+  const segs = u.pathname.split('/').map((seg) => {
+    if (/^\d+$/.test(seg)) return ':id';
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(seg)) return ':uuid';
+    if (/^[0-9a-f]{24}$/i.test(seg)) return ':id';
+    if (seg.length >= 16 && /\d/.test(seg) && /^[\w-]+$/.test(seg)) return ':token';
+    return seg;
+  });
+  const q = [...u.searchParams.entries()].filter(([k]) => KEEP_QUERY.test(k)).sort(([a], [b]) => a.localeCompare(b));
+  return segs.join('/') + (q.length ? '?' + q.map(([k, v]) => `${k}=${v}`).join('&') : '');
+}
+
+// /players/[id], /players/:id, /players/<int:pk>, /players/{id} and /blog/[...slug] as regexes.
+function trackedMatchers(progressFile) {
+  const state = JSON.parse(fs.readFileSync(progressFile, 'utf8'));
+  return state.pages.flatMap((p) => [p.inventory_route || p.route.replace(/ \[.*\]$/, ''), p.url].filter(Boolean)).map((r) => {
+    const [pathPart, query] = r.split('?');
+    const esc = pathPart.replace(/\/$/, '').split('/').map((seg) => {
+      if (/^\[\[?\.\.\./.test(seg) || seg === '*' || seg === '**') return '.*';
+      if (/^\[.*\]$|^:|^<.*>$|^\{.*\}$|^\$/.test(seg)) return '[^/]+';
+      if (/^\(.*\)$/.test(seg)) return null; // Next.js route group: not in the URL
+      return seg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }).filter((x) => x !== null).join('/');
+    return { route: r, re: new RegExp(`^${esc || ''}/?$`), query: query || null };
+  });
+}
+
+// URLs listed in robots.txt sitemaps or /sitemap.xml (one level of sitemap index followed).
+async function sitemapUrls(context, origin) {
+  const get = async (u) => {
+    try { const r = await context.request.get(u, { timeout: 8000 }); return r.ok() ? await r.text() : ''; } catch { return ''; }
+  };
+  const robots = await get(`${origin}/robots.txt`);
+  const toLocal = (u) => { try { const x = new URL(u, origin); return new URL(x.pathname + x.search, origin).toString(); } catch { return null; } };
+  const maps = [...robots.matchAll(/^\s*sitemap:\s*(\S+)/gim)].map((m) => toLocal(m[1])).filter(Boolean);
+  if (!maps.length) maps.push(`${origin}/sitemap.xml`);
+  const urls = new Set();
+  for (const m of maps.slice(0, 5)) {
+    const xml = await get(m);
+    const locs = [...xml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/g)].map((x) => x[1]);
+    if (/<sitemapindex/i.test(xml)) {
+      for (const child of locs.slice(0, 10)) for (const x of (await get(toLocal(child))).matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/g)) urls.add(x[1]);
+    } else locs.forEach((l) => urls.add(l));
+  }
+  // Local copies often ship a sitemap that names the production host: keep the path, use ours.
+  const local = new Set();
+  for (const u of urls) { try { const x = new URL(u); local.add(new URL(x.pathname + x.search, origin).toString()); } catch { /* bad loc */ } }
+  return [...local].slice(0, 2000);
+}
+
+async function discover(args) {
+  const base = args.base || process.env.WEBSITE_AUDIT_BASE;
+  if (!base) die('--base is required');
+  if (args.storage && !fs.existsSync(args.storage)) die(`storage state not found: ${args.storage}`);
+  const origin = new URL(base).origin;
+  const deny = new RegExp(args.deny ? `${DEFAULT_DENY}|${args.deny}` : DEFAULT_DENY, 'i');
+  const maxPages = Number(args['max-pages'] ?? 150);
+  const timeout = Number(args.timeout ?? 20000);
+  const label = args.label || (args.storage ? path.basename(args.storage).replace(/\.json$/, '') : 'anon');
+  const out = args.out || '.website-audit/discover';
+
+  const { chromium } = loadPlaywright();
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ storageState: args.storage || undefined, viewport: { width: 1440, height: 900 } });
+  // Belt and braces: refuse any non-GET document navigation the page itself tries.
+  await context.route('**/*', (route) => {
+    const req = route.request();
+    if (req.isNavigationRequest() && req.method() !== 'GET') return route.abort();
+    return route.continue();
+  });
+  const page = await context.newPage();
+  const queue = (args.path?.length ? args.path : ['/']).map((p) => ({ url: new URL(p, base).toString(), from: '(start)' }));
+  if (args.sitemap !== false) {
+    for (const u of await sitemapUrls(context, origin)) queue.push({ url: u, from: '(sitemap)' });
+  }
+  const seen = new Set();
+  const pages = [];
+  const skipped = new Map();
+  let sessionLost = null;
+  const startUrl = queue[0].url;
+  let previous = '(start)';
+  try {
+    while (queue.length && pages.length < maxPages) {
+      const { url, from } = queue.shift();
+      const u = new URL(url);
+      const pattern = routePattern(u);
+      if (seen.has(pattern)) continue;
+      if (from !== '(start)' && SKIP_EXT.test(u.pathname)) continue;
+      if (from !== '(start)' && deny.test(u.pathname + u.search)) {
+        skipped.set(u.pathname + u.search, 'deny-list (could change state)');
+        continue;
+      }
+      seen.add(pattern);
+      const item = { pattern, sample: u.pathname + u.search, from };
+      try {
+        const resp = await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
+        await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+        item.status = resp ? resp.status() : null;
+        const finalPath = new URL(page.url()).pathname;
+        if (finalPath !== u.pathname) item.redirectedTo = finalPath;
+        if (args.storage && item.redirectedTo && /log-?in|sign-?in|auth/i.test(finalPath)) {
+          item.redirectedToLogin = true;
+          // Gated page, or did the session die? The start page answered before; ask it again.
+          await page.goto(startUrl, { waitUntil: 'domcontentloaded', timeout }).catch(() => {});
+          await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+          if (/log-?in|sign-?in|auth/i.test(new URL(page.url()).pathname)) sessionLost = `after visiting ${previous}`;
+          await page.goto(url, { waitUntil: 'domcontentloaded', timeout }).catch(() => {});
+        }
+        const links = await page.evaluate(() => [...document.querySelectorAll('a[href]')].map((a) => a.href));
+        for (const href of links) {
+          let l;
+          try { l = new URL(href); } catch { continue; }
+          if (l.origin !== origin || SKIP_EXT.test(l.pathname)) continue;
+          l.hash = '';
+          const where = l.pathname + l.search;
+          if (deny.test(where)) { skipped.set(where, 'deny-list (could change state)'); continue; }
+          if (!seen.has(routePattern(l))) queue.push({ url: l.toString(), from: item.sample });
+        }
+      } catch (e) {
+        item.error = String(e.message).split('\n')[0].slice(0, 200);
+      }
+      pages.push(item);
+      previous = item.sample;
+      console.log(`${item.status ?? 'ERR'} ${item.pattern}${item.redirectedTo ? ` -> ${item.redirectedTo}` : ''}${item.error ? ` (${item.error})` : ''}`);
+      if (sessionLost) break;
+    }
+  } finally {
+    await browser.close();
+  }
+
+  const report = { base, label, at: new Date().toISOString(), maxPages, truncated: queue.length > 0 && pages.length >= maxPages, sessionLost, pages, skipped: [...skipped].map(([p, why]) => ({ path: p, why })) };
+  if (args.compare) {
+    const matchers = trackedMatchers(args.compare);
+    report.untracked = pages.filter((p) => !p.error && !p.redirectedToLogin && (p.status ?? 0) < 400).filter((p) => {
+      const [pp, q] = p.sample.split('?');
+      const pathHit = matchers.filter((m) => m.re.test(pp.replace(/\/$/, '') || '/'));
+      if (!pathHit.length) return true;
+      // A kept query param (?tab=billing) is its own page unless a tracked URL names it.
+      const kept = p.pattern.includes('?');
+      return kept && !pathHit.some((m) => m.query && q && q.includes(m.query.split('&')[0]));
+    }).map((p) => p.sample);
+  }
+  fs.mkdirSync(out, { recursive: true });
+  const file = path.join(out, `${label}.json`);
+  fs.writeFileSync(file, JSON.stringify(report, null, 2));
+  console.log(`\n${pages.length} page pattern(s) visited as ${label}; ${skipped.size} link(s) skipped by the deny list; report: ${file}`);
+  if (report.truncated) console.log(`STOPPED at --max-pages ${maxPages} with ${queue.length} link(s) still queued; raise it to go further.`);
+  if (sessionLost) console.log(`SESSION LOST ${sessionLost}: a followed link probably signed the session out. Add it to --deny, log in again, and re-run.`);
+  if (report.untracked) {
+    console.log(report.untracked.length ? `\nNot in the progress file (add each that renders distinct UI with progress.py add):` : '\nEvery discovered page is already tracked.');
+    for (const s of report.untracked) console.log(`  NEW ${s}`);
+  }
 }
 
 // ----------------------------------------------------------------- login
@@ -575,6 +976,6 @@ async function selftest() {
 
 const args = parseArgs(process.argv.slice(2));
 const cmd = args._[0] || 'capture';
-const run = { capture, login, selftest }[cmd];
-if (!run) die(`unknown command "${cmd}" (capture | login | selftest)`);
+const run = { capture, discover, login, selftest }[cmd];
+if (!run) die(`unknown command "${cmd}" (capture | discover | login | selftest)`);
 run(args).catch((e) => die(e.stack || String(e), 1));

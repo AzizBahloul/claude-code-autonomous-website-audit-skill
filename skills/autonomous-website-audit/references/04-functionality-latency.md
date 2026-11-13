@@ -1,5 +1,12 @@
 # Layer: functionality, complexity, latency
 
+> **Answers:** does every control and flow work for every role, and how fast is it end to end?
+> **Gate:** every finding in this layer is resolved, and the note names the tests run and
+> gives before/after timings.
+
+**Steps:** separate noise from bugs, settle intended 401/403s, exercise the page, fix and
+prove each fix, run the complexity pass, then measure latency.
+
 ## Contents
 - Separate noise from bugs
 - 401 and 403: intended or broken?
@@ -7,6 +14,7 @@
 - Fix, then prove the test
 - Complexity pass
 - End-to-end latency
+- Mistakes to avoid
 
 ## Separate noise from bugs
 
@@ -48,6 +56,8 @@ the LOCAL stack:
   back; delete, then confirm it is gone. Check the database or API, not just the UI.
 - Empty, loading and error states. Point at an empty account, slow the network with
   Playwright's `page.route` delays, and force a 500.
+- Three data shapes for every list or detail view: empty, typical, and extreme (very long
+  names, hundreds of rows, huge numbers, missing optional fields).
 - Refresh mid-flow. Deep-link straight into the page. Open it with a stale session.
 
 The project's own e2e suite is the first choice. Add to it rather than writing throwaway
@@ -80,7 +90,7 @@ Measure from the browser through to the database:
 2. **Per endpoint, against the backend directly.** Measure with the role's session. Pass the
    token from an environment variable and never print it:
    `curl -s -o /dev/null -w '%{http_code} ttfb=%{time_starttransfer}s total=%{time_total}s\n' -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/...`
-   Run each a few times and use the median.
+   Run each at least three times and use the median. A single sample is not a measurement.
 3. **Causes to look for:**
    - N+1 queries: turn on ORM query logging and count queries per request.
    - Request waterfalls: sequential awaits that could run in parallel.
@@ -93,3 +103,13 @@ Measure from the browser through to the database:
    after on the same build rather than against the targets.
 
 Record before and after numbers in the dossier.
+
+## Mistakes to avoid
+
+- "Fixing" an intended 403 by loosening the backend rule.
+- Testing CRUD against production, or against a shared staging database other people use.
+- Clicking delete, logout or "send" in a flow without knowing what it does to the session and
+  the data. Read the handler first.
+- Treating `console` errors labelled `chunk-load` as bugs before re-running once. A
+  `hydration-mismatch` is a real bug (server and client render different HTML).
+- Reporting a timing from one run, or from a dev server, as a regression.

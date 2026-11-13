@@ -1,6 +1,10 @@
 # Layer: code
 
-Read the page before changing it. Every later layer depends on this one.
+> **Answers:** what renders this page, what guards it, and which endpoints feed it?
+> **Gate:** the dossier `.website-audit/pages/SLUG.md` exists (`progress.py slug ROUTE` names SLUG).
+
+Read the page before changing it. Every later layer depends on this one. Don't fix anything
+in this layer. Log suspected problems as findings for the layer that will fix them.
 
 ## What to read
 
@@ -41,3 +45,10 @@ gating.
 
 On the first page only, load the design skill chosen in setup, so its guidance is in context
 for every `design` layer after this one.
+
+## Mistakes to avoid
+
+- Reading the page file but not its layouts and middleware, where most guards live.
+- Taking the UI's word for which endpoints run. The baseline's `api.calls` is what actually ran.
+- Skipping the backend because "this is a frontend audit". Authorization, over-fetching and
+  N+1 queries are all on the server.
