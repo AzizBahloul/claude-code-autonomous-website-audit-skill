@@ -1,0 +1,17 @@
+{
+  "name": "autonomous-website-audit",
+  "description": "Page-by-page website audit and repair skill for Claude Code.",
+  "owner": {
+    "name": "Mohamed Aziz Bahloul",
+    "url": "https://github.com/AzizBahloul"
+  },
+  "plugins": [
+    {
+      "name": "autonomous-website-audit",
+      "source": "./",
+      "version": "1.0.0",
+      "category": "development",
+      "description": "Audits and repairs a whole website page by page: route inventory, every role, phone/tablet/desktop in light and dark, then functionality and latency, design, security and i18n fixes in a fixed order until every page is done."
+    }
+  ]
+}

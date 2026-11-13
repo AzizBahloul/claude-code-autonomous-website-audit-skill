@@ -1,0 +1,9 @@
+{
+  "name": "autonomous-website-audit-scripts",
+  "private": true,
+  "description": "Runtime dependency of crawl.mjs. Installed by setup.sh only when the target project has no Playwright of its own.",
+  "type": "module",
+  "dependencies": {
+    "playwright": "^1.56.0"
+  }
+}
