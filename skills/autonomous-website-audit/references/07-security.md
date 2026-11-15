@@ -23,7 +23,14 @@
 
 **Authorization is enforced by the server, for every endpoint the page calls.**
 - Call each endpoint with every other role's session, and with no session at all. Each call
-  must return 401 or 403, not data.
+  must return 401 or 403, not data. For GET endpoints, the matrix does this in one command:
+  ```bash
+  python3 ${CLAUDE_SKILL_DIR}/scripts/bench.py matrix --base http://localhost:8000 \
+    --endpoints .website-audit/endpoints.json --role anonymous= \
+    --role coach=.website-audit/auth/coach.json --role player=.website-audit/auth/player.json --param id=42
+  ```
+  Read only the rows for this page's endpoints. Test writes (POST, PUT, PATCH, DELETE) as each
+  role by hand, on the local stack, against a record that role must not change.
 - IDOR: change the ID in the URL and in the request body to the "must NOT see" sample from the
   dossier. Hiding a button is not access control.
 
@@ -61,6 +68,9 @@
 - File uploads check type and size on the server.
 - Auth forms have rate limiting or lockout, and error messages don't reveal whether an account
   exists.
+- **Endpoints that cost money** (LLM calls, SMS, email, payments, third-party APIs billed
+  per call, large uploads) enforce a per-user quota or rate limit on the server. Without one,
+  any signed-in user can run up the bill. Find them in `ENDPOINTS.md` by their handlers.
 - Error responses carry no stack traces or SQL.
 
 **Headers** (check once per app, recheck if a page sets its own): CSP, frame-ancestors or

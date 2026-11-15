@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Per-page progress tracker: the run's single source of truth for what is done.
 
-Every page goes through the same layers in the same fixed order:
+Before any page, the project as a whole goes through three phases (route @project):
+    architecture -> endpoints -> hygiene
+Then every page goes through the same layers in the same fixed order:
     baseline -> code -> functionality -> design -> a11y -> security -> i18n -> verify
 
 State lives in .website-audit/progress.json; .website-audit/PROGRESS.md is regenerated on
@@ -13,6 +15,11 @@ also need files on disk (SLUG is the page URL slugged the way crawl.mjs names fo
     code      pages/SLUG.md                                          (the dossier)
     a11y      shots/a11y/SLUG/*.json with a keyboard probe           (crawl.mjs --keyboard)
     verify    shots/verify/SLUG/*.json with no count above baseline  (summarize.py compare)
+Project phases are gated the same way (STATE is the .website-audit directory):
+    architecture  architecture.json and ARCHITECTURE.md                  (architecture.py)
+    endpoints     endpoints.json and ENDPOINTS.md, plus perf/bench-*.json when endpoints exist
+    hygiene       hygiene.json and HYGIENE.md; when a hygiene fix landed, shots/smoke/after
+                  re-captured with no count above shots/smoke/before
 --force skips a gate; the note is then recorded as FORCED and the report must explain it.
 
 Findings are the ledger of what was wrong. Log each one the moment it is confirmed, so an
@@ -41,12 +48,15 @@ import json
 import os
 import re
 import sys
+from typing import NoReturn
 from datetime import datetime, timezone
 from pathlib import Path
 
 SEVERITIES = ["critical", "high", "medium", "low"]
 RESOLUTIONS = ["fixed", "deferred", "reverted", "not-a-bug"]
 LAYERS = ["baseline", "code", "functionality", "design", "a11y", "security", "i18n", "verify"]
+PROJECT = "@project"
+PROJECT_PHASES = ["architecture", "endpoints", "hygiene"]
 STATE_DIR = Path(os.environ.get("WEBSITE_AUDIT_DIR", ".website-audit"))
 MIN_NOTE = 12
 
@@ -55,6 +65,21 @@ def layers_of(state):
     # A run keeps the layer list it was created with, so upgrading the skill mid-run
     # never reopens finished pages.
     return state.get("layers") or LAYERS
+
+
+def order_for(state, p):
+    """The ordered steps for a page, or the phases for the @project entry."""
+    return list(p["layers"]) if p.get("route") == PROJECT else layers_of(state)
+
+
+def new_project():
+    page = new_page(PROJECT, url="-", source="skill", layers=PROJECT_PHASES)
+    return page
+
+
+def project_pending(state):
+    pr = state.get("project")
+    return pr is not None and pr["status"] not in ("done", "blocked")
 
 
 def slug(p):
@@ -67,7 +92,7 @@ def now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def die(msg, code=2):
+def die(msg, code=2) -> NoReturn:
     print(f"progress.py: {msg}", file=sys.stderr)
     sys.exit(code)
 
@@ -106,6 +131,10 @@ def new_page(route, file=None, url=None, dynamic=False, source="inventory", laye
 
 
 def find(state, route):
+    if route == PROJECT:
+        if "project" not in state:
+            die("this run was created before project phases existed; it has no @project entry")
+        return state["project"]
     for p in state["pages"]:
         if p["route"] == route:
             return p
@@ -121,6 +150,8 @@ def next_layer(page):
 
 def gate(state_dir, page, layer):
     """Return a list of reasons the layer cannot be marked done yet (empty = ok)."""
+    if page["route"] == PROJECT:
+        return project_gate(state_dir, page, layer)
     sl = slug(page["url"])
     problems = []
     jsons = lambda d: sorted((state_dir / d / sl).glob("*.json")) if (state_dir / d / sl).is_dir() else []
@@ -161,6 +192,36 @@ def gate(state_dir, page, layer):
     return problems
 
 
+def project_gate(state_dir, pr, phase):
+    problems = [f"open finding(s) {', '.join(f['id'] for f in pr['findings'] if f['status'] == 'open' and f['layer'] == phase)}: resolve each first"]
+    if problems[0].startswith("open finding(s) :"):
+        problems = []
+    need = {"architecture": ["architecture.json", "ARCHITECTURE.md"], "endpoints": ["endpoints.json", "ENDPOINTS.md"],
+            "hygiene": ["hygiene.json", "HYGIENE.md"]}[phase]
+    script = {"architecture": "architecture.py", "endpoints": "endpoints.py", "hygiene": "hygiene.py"}[phase]
+    for n in need:
+        if not (state_dir / n).exists():
+            problems.append(f"{state_dir / n} is missing (run {script})")
+    if phase == "endpoints" and (state_dir / "endpoints.json").exists():
+        eps = json.loads((state_dir / "endpoints.json").read_text()).get("endpoints", [])
+        if eps and not list((state_dir / "perf").glob("bench-*.json")):
+            problems.append(f"{len(eps)} endpoint(s) but no measurement in {state_dir}/perf/ (run bench.py run --label baseline)")
+    if phase == "hygiene" and any(f["status"] == "fixed" and f["layer"] == "hygiene" for f in pr["findings"]):
+        before, after = state_dir / "shots/smoke/before", state_dir / "shots/smoke/after"
+        if not before.is_dir() or not after.is_dir():
+            problems.append(f"hygiene fixes landed: smoke-capture every page into {before}/ before and {after}/ after (crawl.mjs capture --viewports desktop --no-screenshot)")
+        else:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from summarize import compare_dirs
+            for d in sorted(x for x in before.iterdir() if x.is_dir()):
+                problems += [f"{d.name}: {m}" for m in compare_dirs(d, after / d.name)["problems"]]
+    return problems
+
+
+def mark_word(v):
+    return {"done": "done", "pending": "pending", "in_progress": "in progress"}.get(v, v)
+
+
 def render(state, md_path):
     pages = state["pages"]
     counts = {s: sum(1 for p in pages if p["status"] == s) for s in ("done", "in_progress", "pending", "blocked")}
@@ -172,6 +233,12 @@ def render(state, md_path):
         "",
         "Generated by `progress.py`. Edit through the script, not by hand.",
         "",
+    ]
+    pr = state.get("project")
+    if pr:
+        steps = ", ".join(f"{k} {mark_word(v)}" for k, v in pr["layers"].items())
+        lines += [f"Project phases ({pr['status']}): {steps}.", ""]
+    lines += [
         "| # | Route | URL | Status | " + " | ".join(layers_of(state)) + " | Findings (open) | Commits |",
         "|---|---|---|---|" + "---|" * len(layers_of(state)) + "---|---|",
     ]
@@ -186,14 +253,14 @@ def render(state, md_path):
     if blocked:
         lines += ["", "## Blocked (needs the user)", ""]
         lines += [f"- `{p['route']}`: {p['blocked_reason']}" for p in blocked]
-    allf = [(p, f) for p in pages for f in p.get("findings", [])]
+    allf = all_findings(state)
     if allf:
         lines += ["", "## Findings", "", "| ID | Route | Layer | Severity | Status | Title | Resolution |", "|---|---|---|---|---|---|---|"]
         order = {s: i for i, s in enumerate(SEVERITIES)}
         for p, f in sorted(allf, key=lambda pf: (pf[1]["status"] != "open", order.get(pf[1]["severity"], 9), pf[1]["id"])):
             res = (f.get("how") or "") + (f" ({f['commit']})" if f.get("commit") else "")
             lines.append(f"| {f['id']} | `{p['route']}` | {f['layer']} | {f['severity']} | {f['status']} | {f['title']} | {res} |")
-    noted = [p for p in pages if p["notes"]]
+    noted = ([state["project"]] if state.get("project", {}).get("notes") else []) + [p for p in pages if p["notes"]]
     if noted:
         lines += ["", "## Notes", ""]
         for p in noted:
@@ -211,7 +278,7 @@ def cmd_init(a, path):
     if path.exists():
         state = json.loads(path.read_text())
     else:
-        state = {"created": now(), "layers": LAYERS, "pages": []}
+        state = {"created": now(), "layers": LAYERS, "pages": [], "project": new_project()}
     known = {(p.get("inventory_route", p["route"]), p["file"]) for p in state["pages"]}
     ids = {p["route"] for p in state["pages"]}
     items = inv.get("pages", [])
@@ -259,6 +326,10 @@ def cmd_set_url(a, path):
 
 def cmd_next(a, path):
     state = load(path)
+    if project_pending(state):
+        pr = state["project"]
+        print(f"{PROJECT}\t{next_layer(pr)}\t-")
+        return
     for status in ("in_progress", "pending"):
         for p in state["pages"]:
             if p["status"] == status:
@@ -272,6 +343,8 @@ def cmd_next(a, path):
 def cmd_start(a, path):
     state = load(path)
     p = find(state, a.route)
+    if a.route != PROJECT and project_pending(state) and not a.force:
+        die(f"finish the project phases first (next: {PROJECT} {next_layer(state['project'])}); pages start after the whole site is mapped")
     if not p["url"]:
         die(f"{a.route} is dynamic and has no URL yet; run `progress.py set-url` first")
     others = [q["route"] for q in state["pages"] if q["status"] == "in_progress" and q["route"] != a.route]
@@ -286,9 +359,11 @@ def cmd_start(a, path):
 
 def cmd_done(a, path):
     state = load(path)
-    if a.layer not in layers_of(state):
-        die(f"unknown layer {a.layer!r}; layers are: {', '.join(layers_of(state))}")
     p = find(state, a.route)
+    if a.layer not in order_for(state, p):
+        die(f"unknown layer {a.layer!r}; layers are: {', '.join(order_for(state, p))}")
+    if a.route == PROJECT and p["status"] == "pending":
+        p["status"], p["started"] = "in_progress", now()
     if p["status"] != "in_progress":
         die(f"{a.route} is {p['status']}; run `progress.py start {a.route}` first")
     if not a.note or len(a.note.strip()) < MIN_NOTE:
@@ -313,10 +388,10 @@ def cmd_done(a, path):
 
 def cmd_reopen(a, path):
     state = load(path)
-    order = layers_of(state)
+    p = find(state, a.route)
+    order = order_for(state, p)
     if a.layer not in order:
         die(f"unknown layer {a.layer!r}")
-    p = find(state, a.route)
     for layer in order[order.index(a.layer):]:
         p["layers"][layer] = "pending"
     p["status"] = "in_progress"
@@ -350,14 +425,15 @@ def cmd_commit(a, path):
 
 
 def all_findings(state):
-    return [(p, f) for p in state["pages"] for f in p.setdefault("findings", [])]
+    owners = ([state["project"]] if state.get("project") else []) + state["pages"]
+    return [(p, f) for p in owners for f in p.setdefault("findings", [])]
 
 
 def cmd_finding(a, path):
     state = load(path)
     p = find(state, a.route)
-    if a.layer not in layers_of(state):
-        die(f"unknown layer {a.layer!r}; layers are: {', '.join(layers_of(state))}")
+    if a.layer not in order_for(state, p):
+        die(f"unknown layer {a.layer!r}; layers are: {', '.join(order_for(state, p))}")
     if a.severity not in SEVERITIES:
         die(f"severity must be one of {', '.join(SEVERITIES)}")
     n = 1 + max([int(f["id"][2:]) for _, f in all_findings(state)] or [0])
@@ -409,7 +485,7 @@ def cmd_status(a, path):
 
 def cmd_check(a, path):
     state = load(path)
-    unfinished = [p for p in state["pages"] if p["status"] in ("pending", "in_progress")]
+    unfinished = ([state["project"]] if project_pending(state) else []) + [p for p in state["pages"] if p["status"] in ("pending", "in_progress")]
     still_open = [(p, f) for p, f in all_findings(state) if f["status"] == "open" and p["status"] != "blocked"]
     for p, f in still_open:
         print(f"OPEN      {f['id']} {p['route']} [{f['severity']}] {f['title']}")
@@ -421,7 +497,7 @@ def cmd_check(a, path):
     if unfinished or still_open or (blocked and not a.allow_blocked):
         print(f"\nNot finished: {len(unfinished)} unfinished, {len(blocked)} blocked of {len(state['pages'])} pages, {len(still_open)} open finding(s).")
         sys.exit(1)
-    forced = [(p["route"], n["layer"]) for p in state["pages"] for n in p["notes"] if n.get("forced")]
+    forced = [(p["route"], n["layer"]) for p in ([state["project"]] if state.get("project") else []) + state["pages"] for n in p["notes"] if n.get("forced")]
     print(f"All {len(state['pages'])} pages finished" + (f" ({len(blocked)} blocked, acknowledged by the user)" if blocked else "") + ".")
     if forced:
         print(f"{len(forced)} gate(s) were forced; explain each in the report: " + ", ".join(f"{r} {l}" for r, l in forced))

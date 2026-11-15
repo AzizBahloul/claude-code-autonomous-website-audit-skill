@@ -3,11 +3,34 @@
 > **Answers:** is this page consistent with the site and unbroken at every width, in both themes?
 > **Gate:** every finding in this layer is resolved, and the note names what changed.
 
-Fix this page's design issues, following the design skill chosen in setup. The goal is
-consistency with the rest of the site, not a redesign (rule I5).
+Fix this page's design issues using every skill on the design roster (`.website-audit/skills.md`),
+each at its own step. The goal is consistency with the rest of the site, not a redesign
+(rule I5).
 
-**Steps:** find the existing tokens and components, work through the checklist for every
-width and both themes, fix with what exists, then re-capture and view the changed areas.
+**Steps:** find the existing tokens and components, run the roster steps below, work through
+the checklist for every width and both themes, fix with what exists, then re-capture and view
+the changed areas.
+
+## Run the roster
+
+Go through the concerns in roster order. Load a skill the first time its concern comes up and
+keep following it on later pages. Skip a concern only when no skill covers it; the checklist
+below is then the fallback. Record which skills ran in the layer note.
+
+| Concern | What to do with it on this page |
+|---|---|
+| doctrine, craft | Read the tiles against the skill's rules: hierarchy, spacing, typography, one primary action |
+| critique | Run the skill's heuristic review or critic on the tiles; every high-severity item becomes a finding |
+| tokens, components | Check every value and component against the system before fixing anything (next section) |
+| qa-gates | Run its gates (hard-coded value lint, contrast) on the page's files, and quote the output |
+| mobile | Phone tiles: safe areas, 100vh, input zoom, tap targets, sticky elements |
+| motion | Only if the page animates: purpose, duration, easing, reduced motion |
+| copy | Buttons, empty states, errors and labels against the copy skill's rules |
+| stress | Feed the page worst-case data (long names, zero items, huge counts) and re-capture |
+| data-viz | Only if the page has charts or stat tiles |
+
+Restyling skills (a new aesthetic, a redesign) don't run here unless the user asked for a
+redesign.
 
 ## Reuse before you create
 
@@ -58,7 +81,19 @@ the same for any shared component you touched, on at least one other page that u
 
 Run `python3 ${CLAUDE_SKILL_DIR}/scripts/summarize.py repeats .website-audit/shots/baseline`
 after the first few pages. A finding repeated across pages belongs to a shared component:
-fix it there once.
+fix it there once. Then list every page the shared fix touches, and re-check them:
+`python3 ${CLAUDE_SKILL_DIR}/scripts/architecture.py --affected HEAD` (or the commit before
+the fix). Reopen finished pages it names at `verify`.
+
+**Rendered design-system drift.** `summarize.py drift .website-audit/shots/baseline` lists the
+font families, sizes and non-gray text colours the pages actually render. More than 3
+families, more than 12 colours, or a value used on one page only usually means a hard-coded
+value where a token belongs. Fix it on the page that owns it.
+
+**Metadata, on public pages only.** `summarize.py seo .website-audit/shots/baseline` lists
+titles, descriptions, canonical, robots and Open Graph per page. Public pages need a unique
+title and a description. A `noindex` left on a public page hides it from search. Signed-in
+pages need no description but must not be indexable.
 
 ## Mistakes to avoid
 

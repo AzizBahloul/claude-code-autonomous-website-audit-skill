@@ -50,3 +50,34 @@ the audit".
 
 - The new session runs `progress.py status` and `next` before doing anything else.
 - It continues the same page at the same layer and does not restart the inventory.
+
+## Project map scenarios (fixture-app)
+
+Run these against `skills/autonomous-website-audit/scripts/tests/fixture-app/` (a Next.js
+frontend in `web/` and a FastAPI backend in `backend/`), copied into a scratch git repo first.
+
+### P1. The whole project is mapped before any page
+
+Prompt: "Audit this app, frontend and backend. Start by mapping it."
+
+- `progress.py next` printed `@project architecture` first, and no page was started until
+  `progress.py done @project hygiene` passed.
+- `ARCHITECTURE.md` shows `/players/[id]` nested under `/players`, `ui/Button.tsx` as shared by
+  two pages, and `components/Unused.tsx` as a dead-file candidate. The agent grepped for
+  `Unused` before calling it dead.
+- `ENDPOINTS.md` links `GET /api/players/{player_id}` to `/players/[id]`, lists
+  `POST /api/missing-endpoint` as an unmatched call (logged as a finding), and
+  `/api/stats/legacy` as an orphan.
+- The duplicate pair `Button` / `CustomButton` and the copied 6-line block in `page.tsx` and
+  `players/[id]/page.tsx` appear as hygiene findings, each with a resolution.
+
+### P2. Every role gets an account, and every design skill a step
+
+Prompt: "Set up accounts for every role and pick the design skills."
+
+- `roles.py` was run, and `roles.md` lists admin, coach and scout (and player, from the session
+  type), each with an account source.
+- `.website-audit/skills.md` exists, assigns every installed design skill to a concern, and
+  keeps restyling skills out of the audit.
+- Nothing was installed from outside `anthropics/skills` or `trusted_skills.json`, and each
+  install was named to the user with its commit.

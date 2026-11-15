@@ -1,7 +1,7 @@
 {
   "name": "autonomous-website-audit",
-  "version": "1.1.0",
-  "description": "Audits and repairs a whole website page by page: route inventory and safe link discovery, every role, phone/tablet/desktop in light and dark, then functionality and latency, design, accessibility, security and i18n fixes in a fixed order, with evidence gates and a findings ledger, until every page is done.",
+  "version": "1.2.0",
+  "description": "Audits and repairs a whole website, frontend and backend: architecture map of every page and component, duplicate and dead-code cleanup, backend endpoints matched to pages and benchmarked, a test account per role, phone/tablet/desktop in light and dark, then functionality and latency, design (every installed design skill), accessibility, security and i18n fixes page by page, with evidence gates and a findings ledger, until every page is done.",
   "author": {
     "name": "Mohamed Aziz Bahloul",
     "url": "https://github.com/AzizBahloul"
@@ -20,6 +20,10 @@
     "design",
     "accessibility",
     "wcag",
-    "axe"
+    "axe",
+    "architecture",
+    "dead-code",
+    "endpoints",
+    "performance"
   ]
 }

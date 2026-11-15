@@ -8,11 +8,16 @@
     {"query": "do a full polish pass across all pages: functionality, design, accessibility, i18n", "should_trigger": true},
     {"query": "crawl the site and make sure no page is broken on mobile", "should_trigger": true},
     {"query": "run an accessibility, security and translation pass over every route", "should_trigger": true},
+    {"query": "map every page and the components it uses, find duplicated and dead code, and check every backend endpoint the pages call", "should_trigger": true},
+    {"query": "go through the whole app frontend and backend, measure endpoint latency per page and clean up what's slow or unused", "should_trigger": true},
+    {"query": "create test accounts for admin and every other role and check each role's interface on all pages", "should_trigger": true},
     {"query": "open example.com in a browser and take a screenshot", "should_trigger": false},
     {"query": "fix the padding on this one button component", "should_trigger": false},
     {"query": "write a Playwright test for the login form", "should_trigger": false},
     {"query": "review this PR for security issues", "should_trigger": false},
     {"query": "scrape product prices from this shop", "should_trigger": false},
-    {"query": "make this landing page look more premium", "should_trigger": false}
+    {"query": "make this landing page look more premium", "should_trigger": false},
+    {"query": "remove the unused imports in this file", "should_trigger": false},
+    {"query": "benchmark this one endpoint with autocannon", "should_trigger": false}
   ]
 }

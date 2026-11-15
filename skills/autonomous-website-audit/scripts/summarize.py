@@ -4,6 +4,8 @@
     summarize.py compare BASELINE_DIR VERIFY_DIR   did anything get worse? (exit 1 if so)
     summarize.py table   SHOTS_DIR                 one row per page and combination
     summarize.py repeats SHOTS_DIR [--min-pages 2] findings shared by several pages
+    summarize.py seo     SHOTS_DIR                 titles, descriptions, noindex, canonical, OG, weight
+    summarize.py drift   SHOTS_DIR                 fonts, sizes and colours rendered across pages
 
 compare pairs reports by file name (<label>__<viewport>__<theme>.json). Any count above the
 baseline, or a baseline combination with no re-capture, is a problem. When both screenshots
@@ -16,6 +18,7 @@ shared layout or component: fix it there once, then re-check every page that use
 """
 import argparse
 import json
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -145,7 +148,7 @@ def findings(r):
 
 def cmd_repeats(a):
     root = Path(a.shots)
-    seen = defaultdict(lambda: {"pages": set(), "detail": ""})
+    seen: defaultdict[tuple, dict] = defaultdict(lambda: {"pages": set(), "detail": ""})
     for page_dir in sorted(p for p in root.iterdir() if p.is_dir()):
         for r in reports(page_dir).values():
             for kind, key, detail in findings(r):
@@ -163,14 +166,91 @@ def cmd_repeats(a):
         print(f"    {', '.join(pages[:8])}{' ...' if len(pages) > 8 else ''}")
 
 
+def first_reports(root):
+    """One report per page (desktop/light preferred), for page-level facts like the title."""
+    for page_dir in sorted(p for p in Path(root).iterdir() if p.is_dir()):
+        reps = reports(page_dir)
+        if reps:
+            pick = next((r for n, r in reps.items() if "__desktop__light" in n), next(iter(reps.values())))
+            yield page_dir.name, pick, reps
+
+
+def cmd_seo(a):
+    titles = defaultdict(list)
+    rows = []
+    for page, r, _ in first_reports(a.shots):
+        st = r.get("structure") or {}
+        title = (r.get("title") or "").strip()
+        titles[title].append(page)
+        w = (r.get("timing") or {}).get("weight") or {}
+        rows.append((page, title, st, w, r.get("signedIn")))
+    print("| page | title | description | canonical | robots | og | JS KB | total KB | requests |")
+    print("|---|---|---|---|---|---|---|---|---|")
+    for page, title, st, w, _ in rows:
+        total = sum(v for k, v in w.items() if k.endswith("KB"))
+        print(f"| {page} | {title[:40]} | {'yes' if st.get('metaDescription') else '**no**'} | {'yes' if st.get('canonical') else 'no'} | "
+              f"{st.get('robots') or ''} | {'yes' if st.get('ogTitle') else 'no'} | {w.get('jsKB', '')} | {total or ''} | {w.get('requests', '')} |")
+    dup = {t: ps for t, ps in titles.items() if len(ps) > 1}
+    print()
+    for t, ps in dup.items():
+        print(f"DUPLICATE TITLE {t!r} on {len(ps)} pages: {', '.join(ps[:6])}")
+    for page, _, st, _, signed in rows:
+        if st.get("robots") and "noindex" in st["robots"] and not signed:
+            print(f"NOINDEX on public page {page}: intended? A leftover noindex hides the page from search")
+    heavy = sorted(((w.get("jsKB") or 0, page) for page, _, _, w, _ in rows), reverse=True)[:5]
+    if heavy and heavy[0][0]:
+        print("Heaviest JS: " + ", ".join(f"{p} {kb} KB" for kb, p in heavy))
+    print("Public pages need a unique title and a description; signed-in pages need neither but should not be indexable.")
+
+
+def is_gray(css):
+    m = re.match(r"rgba?\((\d+),\s*(\d+),\s*(\d+)", css or "")
+    if not m:
+        return True
+    r, g, b = map(int, m.groups())
+    return max(r, g, b) - min(r, g, b) < 16
+
+
+def cmd_drift(a):
+    fonts, sizes, colors = defaultdict(set), defaultdict(set), defaultdict(set)
+    for page, _, reps in first_reports(a.shots):
+        for r in reps.values():
+            t = r.get("designTokens") or {}
+            for f in t.get("fonts", {}):
+                fonts[f].add(page)
+            for s_ in t.get("fontSizes", {}):
+                sizes[s_].add(page)
+            for c in t.get("textColors", {}):
+                colors[c].add(page)
+    if not fonts:
+        print("No designTokens in these reports (captured before crawl.mjs recorded them); re-capture.")
+        return
+    chroma = {c: p for c, p in colors.items() if not is_gray(c)}
+    print(f"font families: {len(fonts)}" + ("  DRIFT: more than 3" if len(fonts) > 3 else ""))
+    for f, ps in sorted(fonts.items(), key=lambda kv: -len(kv[1])):
+        print(f"  {f:<30} {len(ps)} page(s)")
+    print(f"font sizes: {len(sizes)}" + ("  DRIFT: more than 10 sizes; check the type scale" if len(sizes) > 10 else ""))
+    print("  " + ", ".join(f"{s_} ({len(ps)})" for s_, ps in sorted(sizes.items(), key=lambda kv: float(re.sub(r'[^0-9.]', '', kv[0]) or 0))))
+    print(f"non-gray text colours: {len(chroma)}" + ("  DRIFT: more than 12" if len(chroma) > 12 else ""))
+    for c, ps in sorted(chroma.items(), key=lambda kv: -len(kv[1])):
+        print(f"  {c:<26} {len(ps)} page(s)")
+    one_off = [(k, v) for d in (fonts, sizes, chroma) for k, v in d.items() if len(v) == 1]
+    if one_off:
+        print("\nUsed on one page only (likely a hard-coded value instead of a token):")
+        for k, v in one_off:
+            print(f"  {k}  on {next(iter(v))}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("compare"); s.add_argument("baseline"); s.add_argument("verify")
     s = sub.add_parser("table"); s.add_argument("shots")
     s = sub.add_parser("repeats"); s.add_argument("shots"); s.add_argument("--min-pages", type=int, default=2)
+    s = sub.add_parser("seo"); s.add_argument("shots")
+    s = sub.add_parser("drift"); s.add_argument("shots")
     a = ap.parse_args()
-    {"compare": cmd_compare, "table": cmd_table, "repeats": cmd_repeats}[a.cmd](a)
+    {"compare": cmd_compare, "table": cmd_table, "repeats": cmd_repeats, "seo": cmd_seo, "drift": cmd_drift}[a.cmd](a)
 
 
 if __name__ == "__main__":

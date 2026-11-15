@@ -1,12 +1,14 @@
 ---
 name: autonomous-website-audit
-description: Audits and repairs an entire website page by page. Inventories every route, signs in as every role, captures each page at phone, tablet and desktop widths in light and dark mode, then fixes functionality and latency, design, accessibility, security and translation issues in that fixed order, one page at a time, until every page in the inventory is finished. Use when the user asks to audit, QA, crawl, fix or polish a whole site or web app, to check every page or every screen size, or to run a full design, functionality, accessibility, security and i18n pass across all routes.
+description: Audits and repairs an entire website, frontend and backend, page by page. Maps every route and the components behind it, finds duplicated and dead code, matches every backend endpoint to the pages that call it and measures its latency, creates a test account for every role, captures each page at phone, tablet and desktop widths in light and dark mode, then fixes functionality and latency, design (with every installed design skill), accessibility, security and translation issues in a fixed order, one page at a time, until every page is finished. Use when the user asks to audit, QA, crawl, clean up, fix or polish a whole site or web app, to check every page, endpoint or screen size, or to find dead code, duplication and slow endpoints across a project.
 license: MIT
 ---
 
 # Autonomous website audit
 
-Audit and fix a website one page at a time. Every page gets the same layers, in the same
+Audit and fix a website, frontend and backend. First map the whole project once: every page
+and the components behind it, every endpoint and the pages that call it, and the duplicated
+and dead code. Then fix it one page at a time. Every page gets the same layers, in the same
 order, at the same depth. Scripts check the work: a page is finished only when
 `progress.py` has accepted the evidence for every layer, and the run is finished only when
 `progress.py check` exits 0.
@@ -17,14 +19,21 @@ holding this SKILL.md. Run state lives in the target project under `.website-aud
 ## The flow
 
 ```
- 0 SETUP ─► 1 ACCOUNTS ─► 2 INVENTORY ─► 3 PER-PAGE LOOP ─────────────────────► 4 REPORT
- servers,    a session     every route,    for each page, in checklist order:     REPORT.md,
- tooling,    per role,     discovered      baseline ► code ► functionality ►      stop own
- skills      verified      links merged    design ► a11y ► security ► i18n ►      processes
-                                           verify   (progress.py gates each step)
-                                                  │
-                                 regression on an earlier page? ─► reopen it at that layer
+ 0 SETUP ─► 1 ACCOUNTS ─► 2 INVENTORY ─► 2+ PROJECT MAP ─────► 3 PER-PAGE LOOP ──────────► 4 REPORT
+ servers,    every role    every route,   architecture:        for each page, in order:    REPORT.md,
+ tooling,    detected,     discovered     pages > layouts >    baseline ► code ►           before/after
+ design      one account   links merged   components, reuse    functionality ► design ►    counts,
+ skill       each,                        endpoints: routes ◄► a11y ► security ► i18n ►    stop own
+ roster      verified                     calls ◄► pages, p50  verify                      processes
+                                          hygiene: dead code,  (progress.py gates each)
+                                          duplicates, deps
+                                                                    │
+                                        regression on an earlier page? ─► reopen it at that layer
 ```
+
+Every working document is Markdown in `.website-audit/`, written by a script or by you at a
+fixed point in the flow (see "Run folder"). That folder is how a resumed session, the user and
+the report know what happened.
 
 ## Rules
 
@@ -49,7 +58,8 @@ These override everything below. Refer to them by number in notes and in the rep
   the user can excuse a page (`progress.py block`, then acknowledged in the report).
 - **I2 One page at a time, layers in order.** `progress.py` refuses anything else.
 - **I3 Fix the cause, in the right place.** A finding that repeats across pages lives in a
-  shared layout or component: fix it once there (`summarize.py repeats`).
+  shared layout or component: fix it once there (`summarize.py repeats`), then re-check every
+  page it touches (`architecture.py --affected REV` lists them).
 - **I4 Gating is not a bug until proven.** A 401/403 may be intended. Read the backend rule
   before changing it.
 - **I5 Consistency, not redesign.** Use the project's existing tokens and components.
@@ -58,6 +68,12 @@ These override everything below. Refer to them by number in notes and in the rep
 - **I7 Circuit breaker.** After two reverted fixes on one page (`progress.py` announces it), or
   the moment a fix needs edits to files unrelated to the finding, stop fixing that page: block
   it with the reason and move on.
+- **I8 Reuse before create, delete before add.** Before writing a component, helper, style or
+  endpoint, look it up in `ARCHITECTURE.md`, `ENDPOINTS.md` and the design system. Prefer
+  extending what exists. Remove a duplicate rather than adding a third copy.
+- **I9 Every design skill gets used.** The design layer runs every skill on the roster in
+  `skills.md` at its step (see [05-design](references/05-design.md)). Restyling skills are
+  the exception: they run only when the user asks for a redesign.
 
 **Evidence**
 - **E1 Gates, not promises.** Mark a layer done only through `progress.py done ... --note`,
@@ -76,9 +92,10 @@ Read each phase's reference file when the phase starts, not before.
 
 | Phase | Read | Exit gate |
 |---|---|---|
-| 0 Setup | [00-setup](references/00-setup.md) | Local servers answer over HTTP; `setup.sh` passes; not pointed at production; skills chosen |
-| 1 Accounts | [01-accounts](references/01-accounts.md) | One verified storage state per role and per state that changes the UI |
+| 0 Setup | [00-setup](references/00-setup.md) | Local servers answer over HTTP; `setup.sh` passes; not pointed at production; `skills.md` roster written |
+| 1 Accounts | [01-accounts](references/01-accounts.md) | `roles.py` run; one verified storage state per role and per state that changes the UI |
 | 2 Inventory | [02-inventory](references/02-inventory.md) | `progress.py init` done; `crawl.mjs discover --compare` shows no untracked pages; every dynamic route has a URL |
+| 2+ Project map | [02a-architecture](references/02a-architecture.md), [02b-endpoints](references/02b-endpoints.md), [02c-hygiene](references/02c-hygiene.md) | `progress.py done @project architecture`, then `endpoints`, then `hygiene` (gated on evidence); `progress.py start` refuses pages until then |
 | 3 Per-page loop | the layer table below | `progress.py check` exits 0 |
 | 4 Report | [09-report](references/09-report.md) | `.website-audit/REPORT.md` written; own processes stopped |
 
@@ -88,7 +105,9 @@ Read each phase's reference file when the phase starts, not before.
 P="python3 ${CLAUDE_SKILL_DIR}/scripts/progress.py"
 ```
 
-1. `$P next` prints `ROUTE <tab> LAYER <tab> URL`. Never pick pages yourself.
+1. `$P next` prints `ROUTE <tab> LAYER <tab> URL`. Never pick pages yourself. While it prints
+   `@project <tab> PHASE`, do that project phase (read its reference) and close it with
+   `$P done @project PHASE --note "..."`. Findings on project phases use `@project` as ROUTE.
 2. `$P start ROUTE`. Only one page can be in progress.
 3. `$P slug ROUTE` prints the folder name for this page's captures and dossier. Call it SLUG.
 4. Read the reference file for LAYER and do every step in it. Log every confirmed problem:
@@ -144,6 +163,26 @@ one, run `$P reopen ROUTE LAYER` on the earlier page and redo it from that layer
    performance fixes in separate commits. Then run `$P commit ROUTE SHA`. If commits are
    forbidden, leave the tree dirty and list the changes per page in the report.
 
+## Run folder
+
+Everything lives in `.website-audit/` in the target project (kept out of git). Know where each
+thing goes, and never scatter notes elsewhere:
+
+| File | Written by | Holds |
+|---|---|---|
+| `roles.md`, `roles-detected.json` | you, `roles.py` | role and state matrix, accounts created, pages each role reaches |
+| `skills.md` | `find_skills.py --roster` | which design skill runs at which step; installs made |
+| `inventory.json` | `inventory.py` | every route, layouts, components |
+| `ARCHITECTURE.md`, `architecture.json` | `architecture.py` (+ your `## Notes`) | route tree, page > layout > component map, reuse, dead files, duplicates |
+| `ENDPOINTS.md`, `endpoints.json` | `endpoints.py` | endpoints per page, orphan endpoints, broken calls |
+| `HYGIENE.md`, `hygiene.json`, `hygiene/` | `hygiene.py` | duplication, dead code, unused deps, complexity, vulnerable packages |
+| `perf/bench-*.json` | `bench.py` | per-endpoint p50/p95, baseline, per page before/after, final |
+| `PROGRESS.md`, `progress.json` | `progress.py` | the checklist, findings ledger and notes; edit only through the script |
+| `pages/SLUG.md` | you, in the `code` layer | one dossier per page: code map, guards, endpoints with timings, sample IDs |
+| `shots/`, `tiles/` | `crawl.mjs`, `tile.py` | baseline, a11y, smoke and verify captures |
+| `flows/` | you | Playwright flow scripts for the functionality layer |
+| `REPORT.md` | you, in phase 4 | the final report |
+
 ## Stop condition
 
 The run is finished only when `$P check` exits 0. While it exits 1, take the next page and
@@ -156,7 +195,9 @@ acknowledged them.
 ## Resuming and context budget
 
 Long runs outlive one context window. **On resume, re-read this file, then run `$P status`
-and `$P next`, and read the current page's dossier.** Don't trust memory of earlier pages,
+and `$P next`, and read the current page's dossier.** If code changed since the last session
+(another person, another session), run `architecture.py --affected <last commit you recorded>`
+and reopen finished pages it names at `verify`. Don't trust memory of earlier pages,
 because the progress file and dossiers are the record.
 
 To keep the context small:
@@ -182,3 +223,8 @@ To keep the context small:
 - **Green numbers are not "done".** Automated checks find perhaps a third of real issues. The
   tiles, the flows and the code reading find the rest.
 - **Never view a full-page capture directly.** Tile it with `tile.py` first.
+- **Static analysis lies by omission.** Dead-file, orphan-endpoint and unused-dependency lists
+  miss dynamic imports, registries, webhooks and other clients. Grep, build and test before
+  deleting anything they name.
+- **The same component in two folders is a decision, not a find-and-replace.** Diff the
+  behaviour and list the callers before merging.

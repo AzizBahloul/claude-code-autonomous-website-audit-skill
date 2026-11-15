@@ -39,7 +39,7 @@ def collect(inputs):
 def tile_image(src, out_dir, tile_height, overlap, max_width):
     img = Image.open(src)
     if max_width and img.width > max_width:
-        img = img.resize((max_width, round(img.height * max_width / img.width)), Image.LANCZOS)
+        img = img.resize((max_width, round(img.height * max_width / img.width)), Image.Resampling.LANCZOS)
     out_dir.mkdir(parents=True, exist_ok=True)
     step = tile_height - overlap
     if img.height <= tile_height * 1.15:

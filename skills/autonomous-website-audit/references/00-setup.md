@@ -2,7 +2,8 @@
 
 > **Answers:** can the audit run safely here?
 > **Exit gate:** local servers answer over HTTP, nothing points at production, `setup.sh`
-> passes (Playwright, Chromium, axe-core, Pillow), and one skill is chosen per layer.
+> passes (Playwright, Chromium, axe-core, Pillow), and `.website-audit/skills.md` holds the
+> design roster with every gap either filled or explained.
 
 ## Contents
 - Read the project's rules
@@ -10,7 +11,8 @@
 - Start local servers
 - Make sure you are not pointed at production
 - Tooling
-- Choose the design and security skills
+- Build the skill roster
+- Install what is missing
 - Mistakes to avoid
 
 ## Read the project's rules
@@ -71,46 +73,64 @@ Pillow is importable, so a passing run means `crawl.mjs`, `tile.py` and `summari
 work. Run `python3 ${CLAUDE_SKILL_DIR}/scripts/<script> --help` for any script's options
 instead of reading its source.
 
-## Choose the design and security skills
+## Build the skill roster
 
-The design and security layers run through skills the user already has. List what is installed:
-
-```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/find_skills.py
-```
-
-Use the skills in the session's own skill list as well. Then pick one skill per layer:
-
-- **Design.** In order of preference:
-  1. a project-local design skill;
-  2. `frontend-design` (Anthropic);
-  3. another design skill the user installed, such as a UI/UX or design-review skill.
-- **Security.** In order of preference:
-  1. an installed OWASP-style review skill;
-  2. Claude Code's built-in `/security-review` for the diff;
-  3. the checklist in `07-security.md`, which is self-contained.
-- **Accessibility and i18n.** Use an installed skill when there is one (an a11y or WCAG audit
-  skill for the `a11y` layer). The reference files cover both layers on their own.
-
-If no design skill is installed, install Anthropic's official one, then tell the user what
-was installed and from where:
+The design, security, a11y and i18n layers run through skills the user already has, and the
+design layer uses all of them (rule I9). List what is installed, then build the design roster:
 
 ```bash
-bash ${CLAUDE_SKILL_DIR}/scripts/install_skill.sh frontend-design
+python3 ${CLAUDE_SKILL_DIR}/scripts/find_skills.py                 # every layer
+python3 ${CLAUDE_SKILL_DIR}/scripts/find_skills.py --roster        # writes .website-audit/skills.md
 ```
 
-The script installs only from `github.com/anthropics/skills`. It prints the exact source and
-commit, and it records both in `~/.claude/skills/<name>/.installed-from`. Skills installed
-during a session appear in the skill list from the next session onward. Until then, `Read`
-the installed `SKILL.md` directly. `webapp-testing` from the same repository is a useful
-companion for writing Playwright flows.
+`--roster` assigns every installed design skill to one concern: doctrine, critique, craft,
+tokens, components, qa-gates, mobile, motion, copy, stress, data-viz, performance or
+accessibility. The design layer runs each concern's skills at that step. Skills that restyle
+(a new aesthetic, a redesign, logos, generated images) are listed separately and stay out of
+the audit unless the user asks for a redesign (rule I5). Skills in the session's own skill list
+count too. If one is missing from the roster, add it to `skills.md` by hand under its concern.
 
-Anthropic's repository has no security skill. Never install a third-party skill without the
-user's OK: name the repository, say why you picked it, and wait. If nobody is there to answer,
-use the built-in options above and put the recommendation in the report.
+For the other layers, pick in this order:
 
-Load the chosen design skill once, during the first page's `code` layer, and follow it in every
-`design` layer after that.
+- **Security.** 1. an installed OWASP-style review skill; 2. Anthropic's `claude-security`
+  plugin from `anthropics/claude-plugins-official`, if installed (installing a plugin is the
+  user's call: suggest `/plugin install`, don't run it); 3. Claude Code's built-in
+  `/security-review` for the diff; 4. the checklist in `07-security.md`, which is
+  self-contained. When several are installed, run the OWASP-style one on each page and a
+  diff-review skill on the final diff.
+- **Accessibility and i18n.** An installed a11y or WCAG audit skill backs the `a11y` layer.
+  The reference files cover both layers on their own.
+
+## Install what is missing
+
+`skills.md` ends with "Missing concerns and vetted installs". Close each gap from a fixed set of
+sources only:
+
+```bash
+bash ${CLAUDE_SKILL_DIR}/scripts/install_skill.sh --list           # vetted third-party entries
+bash ${CLAUDE_SKILL_DIR}/scripts/install_skill.sh frontend-design  # Anthropic official
+bash ${CLAUDE_SKILL_DIR}/scripts/install_skill.sh <vetted-name>    # from trusted_skills.json
+```
+
+The script installs from `github.com/anthropics/skills` or from an entry in
+`scripts/trusted_skills.json` (a short, human-maintained allowlist, with a license and a reason
+for each entry). It refuses anything else, and it refuses a skill that ships hooks, MCP or
+settings files. It prints the exact source and commit and records both in
+`~/.claude/skills/<name>/.installed-from`. Tell the user each install in one line: the name,
+the repository and the commit.
+
+- **No design skill at all:** install `frontend-design` (Anthropic) without waiting, then tell
+  the user.
+- **A concern with a vetted entry** (copy, motion, a11y, design review): install it and tell the
+  user. The user asked for a full audit, and these are allowlisted.
+- **Anything not on either list:** never install it on your own. Name the repository, say why
+  it fits, and wait for the user's OK. If nobody answers, use the reference files and put the
+  recommendation in the report.
+
+Skills installed during a session appear in the skill list from the next session onward. Until
+then, `Read` the installed `SKILL.md` directly. Re-run `find_skills.py --roster` after
+installing, so `skills.md` is current. `webapp-testing` (Anthropic) is a useful companion for
+writing Playwright flows.
 
 ## Mistakes to avoid
 

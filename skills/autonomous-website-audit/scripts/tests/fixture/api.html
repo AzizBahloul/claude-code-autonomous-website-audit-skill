@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API page</title><meta name="description" content="Two sequential requests.">
+<meta name="robots" content="noindex"></head>
+<body style="font-family: Georgia, serif; color: rgb(180, 30, 30)">
+<h1>API page</h1>
+<p id="out">loading</p>
+<script>
+  // Two requests in sequence: the second waits for the first (a waterfall of depth 2).
+  fetch('/robots.txt').then(r => r.text()).then(() => fetch('/sitemap.xml')).then(r => r.text())
+    .then(() => { document.getElementById('out').textContent = 'loaded'; });
+</script>
+</body>
+</html>

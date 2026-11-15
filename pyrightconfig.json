@@ -1,0 +1,5 @@
+{
+  "include": ["skills/autonomous-website-audit/scripts"],
+  "exclude": ["**/tests/fixture-app", "**/tests/fixture", "**/node_modules"],
+  "pythonVersion": "3.10"
+}

@@ -327,7 +327,26 @@ function domAudit({ maxFindings, checkContrast, checkTouch }) {
     duplicateIds: dupIds.slice(0, maxFindings),
     metaDescription: document.querySelector('meta[name="description"]')?.getAttribute('content') || null,
     canonical: document.querySelector('link[rel="canonical"]')?.getAttribute('href') || null,
+    // A noindex left on a public page hides it from search; one missing on a private page leaks it.
+    robots: document.querySelector('meta[name="robots"]')?.getAttribute('content') || null,
+    ogTitle: document.querySelector('meta[property="og:title"]')?.getAttribute('content') || null,
+    ogImage: document.querySelector('meta[property="og:image"]')?.getAttribute('content') || null,
   };
+  // Rendered design system: the fonts, sizes and text colours actually used, so drift across
+  // pages (a fourth font family, a one-off hex colour) shows up in summarize.py drift.
+  const tokens = { fonts: {}, fontSizes: {}, textColors: {}, sampled: 0 };
+  for (const el of document.body ? document.body.querySelectorAll('*') : []) {
+    if (tokens.sampled >= 1500) break;
+    if (![...el.childNodes].some((c) => c.nodeType === 3 && c.textContent.trim())) continue;
+    if (!visible(el)) continue;
+    tokens.sampled += 1;
+    const cs = getComputedStyle(el);
+    const fam = cs.fontFamily.split(',')[0].replace(/["']/g, '').trim();
+    tokens.fonts[fam] = (tokens.fonts[fam] || 0) + 1;
+    tokens.fontSizes[cs.fontSize] = (tokens.fontSizes[cs.fontSize] || 0) + 1;
+    tokens.textColors[cs.color] = (tokens.textColors[cs.color] || 0) + 1;
+  }
+  out.designTokens = tokens;
   out.structure.issues = [
     h1s.length === 0 && 'no visible <h1>',
     h1s.length > 1 && `${h1s.length} visible <h1> elements`,
@@ -393,6 +412,20 @@ async function vitals(page) {
       loadMs: Math.round(nav.loadEventEnd),
       transferKB: Math.round((nav.transferSize || 0) / 1024),
     } : {};
+    // Page weight by type, from resource timing (transferSize is 0 for cached or cross-origin
+    // resources without Timing-Allow-Origin, so this is a floor, not an exact total).
+    const weight = { jsKB: 0, cssKB: 0, imgKB: 0, fontKB: 0, otherKB: 0, requests: 0 };
+    for (const e of performance.getEntriesByType('resource')) {
+      const kb = (e.transferSize || e.encodedBodySize || 0) / 1024;
+      const t = e.initiatorType;
+      const u = e.name.split('?')[0];
+      const key = /\.m?js$/.test(u) || t === 'script' ? 'jsKB' : /\.css$/.test(u) || (t === 'link' && /css/.test(u)) ? 'cssKB'
+        : t === 'img' || /\.(png|jpe?g|gif|webp|avif|svg)$/.test(u) ? 'imgKB' : /\.(woff2?|ttf|otf)$/.test(u) ? 'fontKB' : 'otherKB';
+      weight[key] += kb;
+      weight.requests += 1;
+    }
+    for (const k of Object.keys(weight)) if (k !== 'requests') weight[k] = Math.round(weight[k]);
+    result.weight = weight;
     let lcp = 0;
     let cls = 0;
     try {
@@ -539,7 +572,8 @@ async function captureOne(browser, opts, pagePath, vp, theme) {
     const t = req.timing();
     let status = null;
     try { status = (await req.response())?.status() ?? null; } catch { /* gone */ }
-    r.api.calls.push({ method: req.method(), url: redactUrl(req.url()), status, ms: t.responseEnd >= 0 ? Math.round(t.responseEnd) : null });
+    // start is epoch ms; bench.py e2e uses it to find request waterfalls (a call that starts after another ends).
+    r.api.calls.push({ method: req.method(), url: redactUrl(req.url()), status, ms: t.responseEnd >= 0 ? Math.round(t.responseEnd) : null, start: t.startTime > 0 ? Math.round(t.startTime) : null });
   });
 
   try {

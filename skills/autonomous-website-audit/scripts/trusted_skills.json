@@ -1,0 +1,59 @@
+{
+  "about": "Vetted third-party skills install_skill.sh may install, each pinned to a commit that was at least two weeks old when vetted. Anthropic's github.com/anthropics/skills needs no entry. Only a human adds entries here: check the license, read every file at the pinned ref, and make sure the skill ships no hooks, binaries, downloads or remote instructions.",
+  "vetted": "2026-11-15",
+  "skills": {
+    "emil-design-eng": {
+      "repo": "https://github.com/emilkowalski/skill",
+      "path": "skills/emil-design-eng",
+      "ref": "a81dbca07f2217b7103e510c0f13f8d5b017afc9",
+      "license": "MIT",
+      "concerns": ["craft"],
+      "why": "UI polish and component craft; markdown only."
+    },
+    "review-animations": {
+      "repo": "https://github.com/emilkowalski/skill",
+      "path": "skills/review-animations",
+      "ref": "a81dbca07f2217b7103e510c0f13f8d5b017afc9",
+      "license": "MIT",
+      "concerns": ["motion"],
+      "why": "Reviews existing motion: purpose, duration, easing, reduced motion; markdown only."
+    },
+    "baseline-ui": {
+      "repo": "https://github.com/ibelick/ui-skills",
+      "path": "skills/baseline-ui",
+      "ref": "b88b130b87af0570d46692fa9806ccbcbd5afec2",
+      "license": "MIT",
+      "concerns": ["craft", "tokens"],
+      "why": "Baseline UI rules (spacing, type, states) that fit a consistency audit; markdown only."
+    },
+    "improve-ui": {
+      "repo": "https://github.com/ibelick/ui-skills",
+      "path": "skills/improve-ui",
+      "ref": "b88b130b87af0570d46692fa9806ccbcbd5afec2",
+      "license": "MIT",
+      "concerns": ["critique"],
+      "why": "Structured critique of an existing screen; markdown plus reference files."
+    },
+    "fixing-accessibility": {
+      "repo": "https://github.com/ibelick/ui-skills",
+      "path": "skills/fixing-accessibility",
+      "ref": "b88b130b87af0570d46692fa9806ccbcbd5afec2",
+      "license": "MIT",
+      "concerns": ["accessibility"],
+      "why": "Fix patterns for common WCAG failures; backs the a11y layer; markdown only."
+    },
+    "ui-ux-pro-max": {
+      "repo": "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill",
+      "path": ".claude/skills/ui-ux-pro-max",
+      "ref": "bf41cbc3ce63e30c922e58ef48741ba6133f9aa9",
+      "license": "MIT",
+      "concerns": ["craft", "tokens", "data-viz"],
+      "why": "Searchable UX guidelines, palettes and stack-specific rules; ships stdlib-only Python search scripts."
+    }
+  },
+  "not_allowlisted": {
+    "impeccable (pbakaus/impeccable)": "launcher runs and downloads a native binary, and installs hooks that run on every edit; install only with the user's explicit consent",
+    "web-design-guidelines (vercel-labs/agent-skills)": "fetches its rules from a remote URL on every run (remote instructions, rule S6); no license detected",
+    "taste-skill (Leonxlnx/taste-skill)": "restyling skill for new landing pages, not an audit; very new repository"
+  }
+}

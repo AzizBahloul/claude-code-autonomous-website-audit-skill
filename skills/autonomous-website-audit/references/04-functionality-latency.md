@@ -73,8 +73,11 @@ query or a request waterfall, go in their own commit and get their own line in t
 
 Simplify only after the page behaves correctly, and keep behaviour identical:
 
-- Delete dead code, unused props and state, and commented-out blocks the page owns.
+- Delete dead code, unused props and state, and commented-out blocks the page owns. Start from
+  the page's entries in `HYGIENE.md` that the hygiene phase deferred to this page.
 - Merge duplicated fetch, format and validation logic into the helper the project already has.
+- On the backend, do the same for this page's handlers: dead branches, duplicated queries and
+  serializers, and permission checks repeated inline instead of the shared permission class.
 - Flatten deeply nested conditionals, and replace effects that only derive state.
 - Leave shared components alone unless you check every caller. Shared refactors get their own
   commit.
@@ -83,26 +86,49 @@ Re-run the page's tests after the pass.
 
 ## End-to-end latency
 
-Measure from the browser through to the database:
+Measure from the browser through to the database, and split the time into its parts:
 
-1. **From the crawl report.** `timing` gives TTFB, DOMContentLoaded, load and LCP;
-   `api.slowest` lists the slowest fetch and XHR calls.
-2. **Per endpoint, against the backend directly.** Measure with the role's session. Pass the
-   token from an environment variable and never print it:
-   `curl -s -o /dev/null -w '%{http_code} ttfb=%{time_starttransfer}s total=%{time_total}s\n' -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/...`
-   Run each at least three times and use the median. A single sample is not a measurement.
+1. **This page's endpoints, directly.** The endpoints phase measured every GET. Re-run only
+   this page's endpoints before you change anything, signed in as the page's role:
+   ```bash
+   python3 ${CLAUDE_SKILL_DIR}/scripts/bench.py run --base http://localhost:8000 \
+     --endpoints .website-audit/endpoints.json --page 'ROUTE' --storage .website-audit/auth/ROLE.json \
+     --param id=42 --label SLUG-before
+   ```
+2. **Browser vs server.** Join the browser's view with the direct measurement:
+   ```bash
+   python3 ${CLAUDE_SKILL_DIR}/scripts/bench.py e2e .website-audit/shots/baseline/SLUG \
+     --bench .website-audit/perf/bench-SLUG-before.json
+   ```
+   For each API call it prints browser time, server p50, and the difference (network, CORS
+   preflight, queueing, client work). It also prints the **waterfall depth**: how many calls
+   had to wait for an earlier one. A large "other" share points at the client or a preflight,
+   not the database. A depth over 3 means sequential awaits that could run in parallel.
+3. **Writes, inside real flows.** Time create, update and delete on the local stack in the
+   flow scripts (Playwright `page.waitForResponse` plus `response.request().timing()`), never
+   in a bench loop.
 3. **Causes to look for:**
    - N+1 queries: turn on ORM query logging and count queries per request.
    - Request waterfalls: sequential awaits that could run in parallel.
    - Over-fetching: whole objects when the page needs three fields.
    - Missing pagination or indexes.
-   - Large client bundles on the page.
+   - Large client bundles on the page: `timing.weight` in the crawl report gives JS, CSS,
+     image and font KB per page, and `summarize.py seo` lists the heaviest pages.
    - Duplicate requests from effects that run twice.
 4. **Rough local targets:** API p50 under 300 ms, page TTFB under 600 ms with a production
    build, no request chain more than three deep. Dev mode is slower, so compare before and
    after on the same build rather than against the targets.
 
-Record before and after numbers in the dossier.
+After the fix, re-run step 1 with `--label SLUG-after` and compare. The note quotes this:
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/bench.py compare .website-audit/perf/bench-SLUG-before.json \
+  .website-audit/perf/bench-SLUG-after.json
+```
+
+It exits 1 if an endpoint got slower than tolerance or changed status. A change smaller than
+the baseline's own spread (p95 minus p50) counts as no change. Record the before and
+after numbers in the dossier.
 
 ## Mistakes to avoid
 

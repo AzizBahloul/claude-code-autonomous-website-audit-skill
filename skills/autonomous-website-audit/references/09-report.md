@@ -31,23 +31,38 @@ copying it.
    fix, and the test that proves it.
 4. **Accessibility.** axe serious/critical before → after, keyboard findings fixed, and what
    was left open.
-5. **Performance.** Before and after medians per endpoint and page; N+1 queries and
-   waterfalls removed.
-6. **Per page.** Route, findings per layer with IDs, commit SHAs, and anything left open.
-7. **Changes to call out plainly.** Do not bury these in a file list:
+5. **Performance.** Before and after medians per endpoint (`bench.py compare` of the
+   baseline and a final run with `--label final`) and per page; waterfall depth before and
+   after (`bench.py e2e`); N+1 queries and waterfalls removed.
+6. **Architecture and hygiene.** Link `ARCHITECTURE.md`, `ENDPOINTS.md` and `HYGIENE.md`.
+   Give the counts before and after: files, components, duplicate groups, dead files removed,
+   orphan endpoints removed, broken calls fixed, dependencies removed, vulnerable packages
+   left. To get the after counts, re-run `architecture.py`, `endpoints.py` and `hygiene.py`
+   with `--out`/`--md` pointing at `*-final.*` files.
+7. **Per page.** Route, findings per layer with IDs, commit SHAs, and anything left open.
+8. **Changes to call out plainly.** Do not bury these in a file list:
    - changed API response shapes;
    - database schema changes and migrations;
    - changed enums;
-   - new dependencies.
-8. **Flagged but not fixed.** Problems outside the audited pages, and text on the site that
+   - new dependencies, and removed ones;
+   - deleted endpoints (another client may still call them).
+9. **Flagged but not fixed.** Problems outside the audited pages, and text on the site that
    tried to give instructions (rule S6).
-9. **Skills installed during the run.** Name, source URL and commit, from
+10. **Skills used and installed.** The design roster from `skills.md` (which skill ran at
+   which step), and for every skill installed during the run: its name, source URL and commit, from
    `~/.claude/skills/<name>/.installed-from`.
-10. **Test accounts created.** Each account, where it was created, and how to remove it.
-11. **Checks.** Quote the last lint, typecheck and test output; don't paraphrase it.
+11. **Test accounts created.** Each account, where it was created, and how to remove it.
+12. **Checks.** Quote the last lint, typecheck and test output; don't paraphrase it.
 
 For every finding listed, give its ID, the repro steps from the ledger, and its evidence
 path, so that someone else can reproduce it without asking.
+
+## Leave a smoke test behind
+
+Leave the user a way to catch the next regression. If the project has an e2e suite and allows
+changes, add one smoke test per role that opens every page in the inventory and fails on a
+page error, a 5xx or a redirect to login. Otherwise write it to
+`.website-audit/flows/smoke.spec.ts` and say in the report how to run it.
 
 ## Cleanup
 

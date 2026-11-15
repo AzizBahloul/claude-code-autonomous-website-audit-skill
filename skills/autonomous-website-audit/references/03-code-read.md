@@ -8,12 +8,20 @@ in this layer. Log suspected problems as findings for the layer that will fix th
 
 ## What to read
 
+Start from the project maps. Don't re-derive what they already list:
+
+```bash
+sed -n "/^### \`ROUTE\`/,/^### /p" .website-audit/ARCHITECTURE.md     # layouts + components
+grep -n "ROUTE" .website-audit/ENDPOINTS.md                            # endpoints this page calls
+```
+
 1. **The route file**: the page entry from the inventory.
 2. **The layout chain**: every layout, template and middleware that wraps the page (listed
    under `layouts` in the inventory), plus route guards and redirects. Many auth and gating
    rules live here rather than in the page.
-3. **The components**: everything under `components` in the inventory. Note which are shared
-   design-system components and which are page-local.
+3. **The components**: every component the architecture map lists for this page. Note which
+   are `shared` (fix those once, and re-check the other pages that use them) and which are
+   page-local. Note duplicates the map flagged that this page uses.
 4. **The data layer**: hooks, loaders, server actions, stores, the API client and the
    formatters the page uses.
 5. **Every backend endpoint the page calls.** Trace each `fetch`, `axios` call or client
@@ -30,8 +38,8 @@ Write `.website-audit/pages/<slug>.md` (the slug matches the shots directory):
 # /players/[id]
 - Entry: app/(coach)/players/[id]/page.tsx (client component)
 - Guards: middleware.ts requires a session; layout redirects non-coach roles to /home
-- Endpoints: GET /api/players/:id (PlayerDetailView, IsCoachOfClub),
-  GET /api/players/:id/stats (premium only, intended 403 for free accounts)
+- Endpoints: GET /api/players/:id (PlayerDetailView, IsCoachOfClub; bench p50 84ms),
+  GET /api/players/:id/stats (premium only, intended 403 for free accounts; p50 410ms: slow)
 - Shared components: Card, StatTile, EmptyState (components/ui)
 - Data shown per role: coach sees the full profile; scout sees no contact fields
 - Sample IDs: 42 (coach's own club), 77 (another club: must be refused)
@@ -41,10 +49,11 @@ Write `.website-audit/pages/<slug>.md` (the slug matches the shots directory):
 The "intended 403" lines matter. They stop the functionality layer from "fixing" deliberate
 gating.
 
-## Load the design skill
+## Load the design roster
 
-On the first page only, load the design skill chosen in setup, so its guidance is in context
-for every `design` layer after this one.
+On the first page only, read `.website-audit/skills.md` (the roster from setup) and load the
+`doctrine` and `craft` skills, so their guidance is in context for every `design` layer after
+this one. The other roster skills load at their own step in the design layer.
 
 ## Mistakes to avoid
 

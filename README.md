@@ -112,9 +112,10 @@ What to expect at the start of a run:
 ### The flow
 
 ```
- 0 SETUP ─► 1 ACCOUNTS ─► 2 INVENTORY ─► 3 PER-PAGE LOOP ─────────────────────► 4 REPORT
-                                          baseline ► code ► functionality ►
-                                          design ► a11y ► security ► i18n ► verify
+ 0 SETUP ─► 1 ACCOUNTS ─► 2 INVENTORY ─► 2+ PROJECT MAP ─► 3 PER-PAGE LOOP ─────────► 4 REPORT
+                                          architecture ►    baseline ► code ► functionality ►
+                                          endpoints ►       design ► a11y ► security ► i18n ►
+                                          hygiene           verify
                                           (progress.py gates every step)
 ```
 
@@ -122,10 +123,11 @@ What to expect at the start of a run:
 
 | Phase | What happens |
 |---|---|
-| 0. Setup | Reads your project's `CLAUDE.md` and test commands, starts local servers, confirms nothing points at production, and checks Playwright, axe-core and Pillow. It picks your installed design and security skills; if no design skill is installed, it installs Anthropic's official `frontend-design` and tells you. |
-| 1. Accounts | One verified browser session per role, plus logged-out and free/unpaid where those change a page. |
+| 0. Setup | Reads your project's `CLAUDE.md` and test commands, starts local servers, confirms nothing points at production, and checks Playwright, axe-core and Pillow. It builds a **design skill roster**: every installed design skill assigned to the step it serves (tokens, critique, copy, motion, mobile, stress test...). Concerns no skill covers get a vetted install from Anthropic's repository or a short allowlist, and you are told exactly what was installed and from which commit. |
+| 1. Accounts | `roles.py` finds every role and UI-changing state in the code (enums, guards, permission classes, role-named route folders, seeds). Then it creates a local test account for each one, admin included, and verifies each session reaches a page only that role can open. |
 | 2. Inventory | Detects the framework and lists every page, its layouts and its components, then crawls links and the sitemap per role to find the rest. Dynamic routes get real sample IDs. |
-| 3. Per-page loop | The eight layers below, for every page, in order. |
+| 2+. Project map | Runs once, before any page, and `progress.py` won't start a page until it is done. **Architecture:** a route tree, each page's layout chain and every component it reaches, a reuse table (shared, single-page, unused), dead-file candidates and duplicate components. **Endpoints:** every backend route (Express, NestJS, FastAPI, Flask, Django/DRF, Laravel, Spring, Go, Next/Nuxt handlers) matched to the frontend calls and pages that use it, broken calls, orphan endpoints, and p50/p95 for every GET endpoint. **Hygiene:** repeated code blocks, commented-out code, debug leftovers, unused dependencies, big files, plus knip, jscpd, vulture, radon, npm audit and pip-audit when available. Safe fixes land in small commits, with a smoke capture of every page before and after. |
+| 3. Per-page loop | The eight layers below, for every page, in order. Functionality now includes per-page endpoint benchmarks before and after, and an end-to-end split of browser time vs server time with request-waterfall depth. |
 | 4. Report | `.website-audit/REPORT.md`: what needs you first, then findings by severity with repro steps, security, accessibility, performance before and after, API/schema/enum changes called out plainly, and the test accounts created. |
 
 ### The eight layers, for every page
@@ -164,6 +166,11 @@ agents, pa11y-ci, unlighthouse):
 - A failing test is classified before anyone touches it, and an assertion is never weakened
   just to make it pass.
 - Problems repeated across pages are grouped, so they are fixed once in the shared component.
+- Static analysis misses dynamic imports, registries, webhooks and other clients. Every
+  dead-code, orphan-endpoint and unused-dependency result is treated as a candidate: grep,
+  build and test before deleting, and a smoke capture of every page confirms nothing broke.
+- Restyling design skills are kept out of an audit unless you ask for a redesign, so pages
+  stay consistent with each other.
 
 - Aborted media preloads, external CDN resets and dev-server HMR crashes are labelled as
   noise, not reported as bugs.
@@ -183,6 +190,7 @@ skills/autonomous-website-audit/
   SKILL.md                       the flow, the rules, the per-page loop, the stop condition
   references/                    one card per phase or layer, loaded only when it runs
     00-setup.md  01-accounts.md  02-inventory.md  capture.md (baseline + verify)
+    02a-architecture.md  02b-endpoints.md  02c-hygiene.md   (project map, once)
     03-code-read.md  04-functionality-latency.md  05-design.md  06-a11y.md
     07-security.md  08-i18n.md  09-report.md
   scripts/
@@ -190,12 +198,19 @@ skills/autonomous-website-audit/
     summarize.py                 compare baseline vs verify, cross-page table, repeated findings
     tile.py                      splits tall screenshots into readable tiles
     inventory.py                 route + component inventory for many frameworks
+    architecture.py              page > layout > component map, reuse, dead files, duplicates
+    endpoints.py                 backend routes <-> frontend calls <-> pages; orphans, broken calls
+    bench.py                     per-endpoint p50/p95, before/after compare, browser-vs-server e2e
+    hygiene.py                   duplication, dead code, unused deps, complexity, vulnerable deps
+    roles.py                     every role and UI-changing state the code knows about
     progress.py                  per-page checklist, evidence gates, findings ledger, stop condition
     i18n_check.py                compares translation catalogs across locales and against code
-    find_skills.py               lists installed design/security/i18n/a11y skills
-    install_skill.sh             installs a skill from github.com/anthropics/skills only
+    find_skills.py               lists installed skills; --roster assigns every design skill a step
+    install_skill.sh             installs from anthropics/skills or the vetted allowlist only
+    trusted_skills.json          the vetted third-party skill allowlist (edited by humans)
     setup.sh                     checks or installs Playwright, Chromium, axe-core and Pillow
-    tests/                       end-to-end tests against a fixture site with planted defects
+    tests/                       end-to-end tests against a fixture site and a fixture app
+                                 (Next.js + FastAPI) with planted defects
 evals/                           trigger and behaviour evals for the skill itself
 ```
 
@@ -213,7 +228,7 @@ python3 $S/tile.py .website-audit/shots/pricing --out .website-audit/tiles/prici
 ```bash
 cd skills/autonomous-website-audit/scripts
 bash setup.sh                       # Playwright, Chromium, axe-core, Pillow
-python3 tests/test_scripts.py       # end-to-end tests against tests/fixture/
+python3 tests/test_scripts.py       # end-to-end tests against tests/fixture/ and tests/fixture-app/
 ```
 
 The fixture site has a page full of planted defects and clean pages with none. Every check
